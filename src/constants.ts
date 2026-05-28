@@ -85,19 +85,10 @@ export const DAG_TOOL_STARTED_RE =
 export const DAG_TOOL_COMPLETED_RE =
 	/^\[([^\]]+)\]\s+tool:\s+(\S+)\s+\((\d+)ms\)$/i;
 
-// Also match Archon's structured JSON event format when --json-events is used:
-//   {"type":"node_started","nodeId":"...","nodeName":"..."}
-//   {"type":"node_completed","nodeId":"...","nodeName":"...","duration":45000}
-//   {"type":"node_failed","nodeId":"...","nodeName":"...","error":"..."}
-//   {"type":"node_skipped","nodeId":"...","nodeName":"...","reason":"..."}
-//   {"type":"approval_pending","nodeId":"...","message":"..."}
-//   {"type":"tool_started","stepName":"...","toolName":"..."}
-//   {"type":"tool_completed","stepName":"...","toolName":"...","durationMs":1234}
-//   {"type":"workflow_started",...}
-//   {"type":"workflow_completed",...}
-//   {"type":"workflow_failed",...}
-export const DAG_JSON_EVENT_TYPE_RE =
-	/^\{"type":"(node_started|node_completed|node_failed|node_skipped|approval_pending|tool_started|tool_completed|workflow_started|workflow_completed|workflow_failed)"/;
+// NOTE: Archon CLI does NOT currently emit --json-events format.
+// When/if upstream adds this flag, pi-archon can add a JSON parsing path here.
+// For now, all DAG event parsing is regex-based on CLI stderr.
+
 export const JSON_STEP_MAP: Record<
 	string,
 	(nodeId?: string) => string | undefined
@@ -107,13 +98,6 @@ export const JSON_STEP_MAP: Record<
 	dag_workflow_starting: () => "workflow starting",
 	dag_workflow_finished: () => "workflow finished",
 	workflow_starting: () => "workflow starting",
-	node_started: (nodeId) => (nodeId ? `${nodeId} started` : undefined),
-	node_completed: (nodeId) => (nodeId ? `${nodeId} completed` : undefined),
-	node_failed: (nodeId) => (nodeId ? `${nodeId} failed` : undefined),
-	node_skipped: (nodeId) => (nodeId ? `${nodeId} skipped` : undefined),
-	workflow_started: () => "workflow started",
-	workflow_completed: () => "workflow completed",
-	workflow_failed: () => "workflow failed",
 };
 export const DEFAULT_LEVEL_CONFIG: LogLevelConfig = {
 	debug: 20,

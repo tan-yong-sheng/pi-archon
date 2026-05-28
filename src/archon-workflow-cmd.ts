@@ -1,5 +1,13 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { ARCHON_PILL_DEFAULT, DEFAULT_QUERY, PROGRESS_UPDATE_MS } from "./constants";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+} from "@mariozechner/pi-coding-agent";
+import {
+	ARCHON_PILL_DEFAULT,
+	DEFAULT_QUERY,
+	PROGRESS_UPDATE_MS,
+	STATUS_KEY_RUNNING,
+} from "./constants";
 import type {
 	ArchonRunResult,
 	ArchonToolUpdate,
@@ -13,7 +21,10 @@ import {
 	normalizeString,
 	toPillLabel,
 } from "./helpers";
-import { redactSecrets, safeCode, LogEvent, tryParseDagEvent } from "./output-filter";
+import {
+	redactSecrets,
+	safeCode,
+} from "./output-filter";
 import { ProgressBox } from "./ui/progress-box";
 import {
 	cancelArchonWorkflowRun,
@@ -23,7 +34,6 @@ import {
 	runArchonCommand,
 	runArchonCommandStreaming,
 	formatArchonOutput,
-	formatArchonToolResult,
 } from "./archon-exec";
 
 // ─── Error output formatting ──────────────────────────────
@@ -102,6 +112,9 @@ async function runWorkflowForCommand(
 				if (finished) return;
 				finished = true;
 				box.stop();
+				clearInterval(statusSync);
+				ctx.ui.setStatus(STATUS_KEY_RUNNING, undefined);
+				ctx.ui.setWidget("archon-progress", undefined);
 				done(value);
 			};
 
@@ -114,19 +127,11 @@ async function runWorkflowForCommand(
 				onAbort: () => {
 					if (cancelling || finished) return;
 					cancelling = true;
-					box.appendLine(
-						`Cancelling workflow '${workflow}'...`,
-						false,
-					);
+					box.appendLine(`Cancelling workflow '${workflow}'...`, false);
 					void (async () => {
 						try {
-							const runId = await findActiveWorkflowRunId(
-								pi,
-								cwd,
-								workflow,
-							);
-							if (runId)
-								await cancelArchonWorkflowRun(pi, runId, cwd);
+							const runId = await findActiveWorkflowRunId(pi, cwd, workflow);
+							if (runId) await cancelArchonWorkflowRun(pi, runId, cwd);
 						} catch (error) {
 							box.appendLine(
 								`Cancel request failed: ${normalizeError(error)}`,
@@ -151,14 +156,11 @@ async function runWorkflowForCommand(
 					return;
 				}
 
-				const approvalNodeId =
-					box.dagTracker.approvalPendingNodeId;
+				const approvalNodeId = box.dagTracker.approvalPendingNodeId;
 				if (!approvalNodeId || box.dagTracker.workflowDone) return;
 
 				// Found an approval gate — ask the user
-				const node = box.dagTracker.nodes.find(
-					(n) => n.id === approvalNodeId,
-				);
+				const node = box.dagTracker.nodes.find((n) => n.id === approvalNodeId);
 				const msg = node?.approvalMessage ?? "Approve this step?";
 
 				void (async () => {
@@ -168,10 +170,7 @@ async function runWorkflowForCommand(
 							`${msg}\n\nApprove this workflow step?`,
 						);
 						if (approved) {
-							box.appendLine(
-								`[approval] Approved: ${approvalNodeId}`,
-								false,
-							);
+							box.appendLine(`[approval] Approved: ${approvalNodeId}`, false);
 							box.dagTracker.applyEvent({
 								type: "node_completed",
 								nodeId: approvalNodeId,
@@ -180,20 +179,11 @@ async function runWorkflowForCommand(
 							box.clearApproval();
 							// Send approve command to Archon
 							try {
-								const runId =
-									await findActiveWorkflowRunId(
-										pi,
-										cwd,
-										workflow,
-									);
+								const runId = await findActiveWorkflowRunId(pi, cwd, workflow);
 								if (runId) {
 									await runArchonCommand(
 										pi,
-										[
-											"workflow",
-											"approve",
-											runId,
-										],
+										["workflow", "approve", runId],
 										cwd,
 									);
 								}
@@ -204,10 +194,7 @@ async function runWorkflowForCommand(
 								);
 							}
 						} else {
-							box.appendLine(
-								`[approval] Rejected: ${approvalNodeId}`,
-								false,
-							);
+							box.appendLine(`[approval] Rejected: ${approvalNodeId}`, false);
 							box.dagTracker.applyEvent({
 								type: "node_failed",
 								nodeId: approvalNodeId,
@@ -216,20 +203,11 @@ async function runWorkflowForCommand(
 							box.clearApproval();
 							// Send reject command to Archon
 							try {
-								const runId =
-									await findActiveWorkflowRunId(
-										pi,
-										cwd,
-										workflow,
-									);
+								const runId = await findActiveWorkflowRunId(pi, cwd, workflow);
 								if (runId) {
 									await runArchonCommand(
 										pi,
-										[
-											"workflow",
-											"reject",
-											runId,
-										],
+										["workflow", "reject", runId],
 										cwd,
 									);
 								}
@@ -246,6 +224,48 @@ async function runWorkflowForCommand(
 					}
 				})();
 			}, 2000);
+
+			// ── Status bar + widget sync ──────────────────────────────────
+			const statusSync = setInterval(() => {
+				if (finished) return;
+				const tracker = box.dagTracker;
+				const elapsed = formatElapsed(Math.floor((Date.now() - startedAt) / 1000));
+				const progress = tracker.progressSummary(
+					Math.floor((Date.now() - startedAt) / 1000),
+				);
+
+				// Footer status bar
+				const statusText = tracker.workflowDone
+					? tracker.workflowError
+						? `◆ archon ${workflow} failed · ${elapsed}`
+						: `✓ archon ${workflow} done · ${elapsed}`
+					: `◆ archon ${workflow} ${progress}`;
+				ctx.ui.setStatus(STATUS_KEY_RUNNING, statusText);
+
+				// Widget above editor — compact DAG summary
+				if (!tracker.workflowDone) {
+					const runningNodes = tracker.runningNodeIds;
+					const widgetLines: string[] = [
+						`archon ${workflow} ${progress}`,
+					];
+					if (runningNodes.length > 0) {
+						widgetLines.push(
+							`  running: ${runningNodes.join(", ")}`,
+						);
+					}
+					if (tracker.approvalPendingNodeId) {
+						widgetLines.push(
+							`  ⏸ approval: ${tracker.approvalPendingNodeId}`,
+						);
+					}
+					ctx.ui.setWidget("archon-progress", widgetLines);
+				} else {
+					ctx.ui.setWidget("archon-progress", undefined);
+				}
+			}, PROGRESS_UPDATE_MS);
+
+			// Set initial status
+			ctx.ui.setStatus(STATUS_KEY_RUNNING, `◆ archon ${workflow} starting...`);
 
 			runArchonWorkflowStreaming(
 				workflow,
@@ -301,8 +321,7 @@ export async function runWorkflowWithToolUpdates(
 	onUpdate?: (update: ArchonToolUpdate) => void,
 ): Promise<{ run: ArchonRunResult; durationMs: number }> {
 	const startedAt = Date.now();
-	const preview =
-		query.length > 72 ? `${query.slice(0, 72)}...` : query;
+	const preview = query.length > 72 ? `${query.slice(0, 72)}...` : query;
 
 	const pushUpdate = (
 		phase: "start" | "running" | "done",
@@ -378,9 +397,7 @@ export async function handleWorkflowCommand(
 		}
 
 		if (!outcome.run)
-			throw new Error(
-				outcome.error || "Workflow did not return a result.",
-			);
+			throw new Error(outcome.error || "Workflow did not return a result.");
 
 		// Strip archon's own log lines from emitted output
 		const cleaned = formatArchonOutput(
@@ -409,16 +426,12 @@ export async function handleWorkflowCommand(
 		);
 	} catch (error) {
 		const message = normalizeError(error);
-		emitArchonMessage(
-			pi,
-			formatCommandErrorOutput(workflow, query, message),
-			{
-				workflow,
-				query,
-				error: message,
-				pill: toPillLabel(workflow),
-			},
-		);
+		emitArchonMessage(pi, formatCommandErrorOutput(workflow, query, message), {
+			workflow,
+			query,
+			error: message,
+			pill: toPillLabel(workflow),
+		});
 		ctx.ui.notify(`Archon ${workflow} failed: ${message}`, "error");
 	}
 }

@@ -1,6 +1,5 @@
 import {
 	DAG_APPROVAL_PENDING_RE,
-	DAG_JSON_EVENT_TYPE_RE,
 	DAG_NODE_COMPLETED_RE,
 	DAG_NODE_FAILED_RE,
 	DAG_NODE_SKIPPED_RE,
@@ -100,27 +99,6 @@ function parseLine(raw: string): LiveEventLine {
 	if (/^\[+$/.test(trimmed) || /^\]+$/.test(trimmed))
 		return { text: "", isErr: false };
 
-	// ── Try structured DAG JSON event (--json-events format) ──
-	if (DAG_JSON_EVENT_TYPE_RE.test(trimmed)) {
-		try {
-			const start = trimmed.indexOf("{");
-			const end = trimmed.lastIndexOf("}") + 1;
-			if (start >= 0 && end > start) {
-				const dagEvent = JSON.parse(trimmed.slice(start, end)) as DagEvent;
-				const step = stepFromDagEvent(dagEvent);
-				const text = textFromDagEvent(dagEvent);
-				return {
-					text,
-					isErr:
-						dagEvent.type === "node_failed" ||
-						dagEvent.type === "workflow_failed",
-					step,
-				};
-			}
-		} catch {
-			/* fall through */
-		}
-	}
 
 	// ── Try structured JSON event (legacy Archon format) ──
 	let payload: JsonPayload | undefined;
@@ -373,19 +351,6 @@ export function tryParseStderrDagEvent(line: string): DagEvent | undefined {
 export function tryParseDagEvent(line: string): DagEvent | undefined {
 	const trimmed = line.trim();
 	if (!trimmed) return undefined;
-
-	// Try JSON first (--json-events format)
-	if (DAG_JSON_EVENT_TYPE_RE.test(trimmed)) {
-		try {
-			const start = trimmed.indexOf("{");
-			const end = trimmed.lastIndexOf("}") + 1;
-			if (start >= 0 && end > start) {
-				return JSON.parse(trimmed.slice(start, end)) as DagEvent;
-			}
-		} catch {
-			/* fall through */
-		}
-	}
 
 	// Try stderr patterns
 	return tryParseStderrDagEvent(trimmed);
