@@ -2,11 +2,16 @@ import type { ArchonEndpointConfig, LogLevelConfig } from "./types";
 
 export const ARCHON_ROOT = process.env.ARCHON_ROOT?.trim() || "/opt/archon";
 export const ARCHON_DEFAULT_HOME = `${process.env.HOME || process.cwd()}/.archon`;
-export const ARCHON_ENDPOINT_CONFIG_NAMES = [".pi-archon.yaml", ".pi-archon.yml", ".pi/pi-archon.yaml", ".pi/pi-archon.yml"] as const;
+export const ARCHON_ENDPOINT_CONFIG_NAMES = [
+	".pi-archon.yaml",
+	".pi-archon.yml",
+	".pi/pi-archon.yaml",
+	".pi/pi-archon.yml",
+] as const;
 export const DEFAULT_ARCHON_ENDPOINTS: ArchonEndpointConfig = {
-  host: "127.0.0.1",
-  serverPort: "3090",
-  webPort: "5173",
+	host: "127.0.0.1",
+	serverPort: "3090",
+	webPort: "5173",
 };
 export const STATUS_KEY_RUNNING = "archon_running";
 export const EXEC_TIMEOUT_MS = 15 * 60 * 1000;
@@ -38,27 +43,83 @@ export const ARCHON_PILL_UPDATE = "UPDATE";
 export const PANEL_SIDE_PAD = 2;
 export const PANEL_GUTTER = "  ";
 
-export const SKIP_KEYS = new Set(["level", "time", "pid", "hostname", "module", "msg", "err", "stack"]);
+export const SKIP_KEYS = new Set([
+	"level",
+	"time",
+	"pid",
+	"hostname",
+	"module",
+	"msg",
+	"err",
+	"stack",
+]);
 export const STEP_PATTERNS = {
-  started: /^\[([^\]]+)\]\s+Started/i,
-  completed: /^\[([^\]]+)\]\s+Completed/i,
-  dispatching: /^Dispatching workflow:\s+\*\*(.+?)\*\*/i,
-  startingWorkflow: /^🚀\s+\*\*Starting workflow\*\*/i,
-  workflowCompleted: /^Workflow completed successfully\./i,
-  workflowPaused: /^Workflow paused/i,
+	started: /^\[([^\]]+)\]\s+Started/i,
+	completed: /^\[([^\]]+)\]\s+Completed/i,
+	dispatching: /^Dispatching workflow:\s+\*\*(.+?)\*\*/i,
+	startingWorkflow: /^🚀\s+\*\*Starting workflow\*\*/i,
+	workflowCompleted: /^Workflow completed successfully\./i,
+	workflowPaused: /^Workflow paused/i,
 } as const;
-export const JSON_STEP_MAP: Record<string, (nodeId?: string) => string | undefined> = {
-  dag_node_started: (nodeId) => nodeId ? `${nodeId} started` : undefined,
-  dag_node_completed: (nodeId) => nodeId ? `${nodeId} completed` : undefined,
-  dag_workflow_starting: () => "workflow starting",
-  dag_workflow_finished: () => "workflow finished",
-  workflow_starting: () => "workflow starting",
+
+// ─── Structured DAG event patterns (from Archon CLI renderWorkflowEvent) ──
+// These match the exact stderr output from Archon's CLI:
+//   [nodeName] Started
+//   [nodeName] Completed (45s)
+//   [nodeName] Completed (1m30s)
+//   [nodeName] Failed: error message
+//   [nodeName] Skipped (reason)
+//   [nodeId] Waiting for approval: message
+//   [stepName] tool: toolName (started)          ← verbose only
+//   [stepName] tool: toolName (1234ms)           ← verbose only
+
+export const DAG_NODE_STARTED_RE = /^\[([^\]]+)\]\s+Started$/i;
+export const DAG_NODE_COMPLETED_RE =
+	/^\[([^\]]+)\]\s+Completed\s+\(([^)]+)\)$/i;
+export const DAG_NODE_FAILED_RE = /^\[([^\]]+)\]\s+Failed:\s+(.+)$/i;
+export const DAG_NODE_SKIPPED_RE = /^\[([^\]]+)\]\s+Skipped\s+\(([^)]+)\)$/i;
+export const DAG_APPROVAL_PENDING_RE =
+	/^\[([^\]]+)\]\s+Waiting for approval:\s+(.+)$/i;
+export const DAG_TOOL_STARTED_RE =
+	/^\[([^\]]+)\]\s+tool:\s+(\S+)\s+\(started\)$/i;
+export const DAG_TOOL_COMPLETED_RE =
+	/^\[([^\]]+)\]\s+tool:\s+(\S+)\s+\((\d+)ms\)$/i;
+
+// Also match Archon's structured JSON event format when --json-events is used:
+//   {"type":"node_started","nodeId":"...","nodeName":"..."}
+//   {"type":"node_completed","nodeId":"...","nodeName":"...","duration":45000}
+//   {"type":"node_failed","nodeId":"...","nodeName":"...","error":"..."}
+//   {"type":"node_skipped","nodeId":"...","nodeName":"...","reason":"..."}
+//   {"type":"approval_pending","nodeId":"...","message":"..."}
+//   {"type":"tool_started","stepName":"...","toolName":"..."}
+//   {"type":"tool_completed","stepName":"...","toolName":"...","durationMs":1234}
+//   {"type":"workflow_started",...}
+//   {"type":"workflow_completed",...}
+//   {"type":"workflow_failed",...}
+export const DAG_JSON_EVENT_TYPE_RE =
+	/^\{"type":"(node_started|node_completed|node_failed|node_skipped|approval_pending|tool_started|tool_completed|workflow_started|workflow_completed|workflow_failed)"/;
+export const JSON_STEP_MAP: Record<
+	string,
+	(nodeId?: string) => string | undefined
+> = {
+	dag_node_started: (nodeId) => (nodeId ? `${nodeId} started` : undefined),
+	dag_node_completed: (nodeId) => (nodeId ? `${nodeId} completed` : undefined),
+	dag_workflow_starting: () => "workflow starting",
+	dag_workflow_finished: () => "workflow finished",
+	workflow_starting: () => "workflow starting",
+	node_started: (nodeId) => (nodeId ? `${nodeId} started` : undefined),
+	node_completed: (nodeId) => (nodeId ? `${nodeId} completed` : undefined),
+	node_failed: (nodeId) => (nodeId ? `${nodeId} failed` : undefined),
+	node_skipped: (nodeId) => (nodeId ? `${nodeId} skipped` : undefined),
+	workflow_started: () => "workflow started",
+	workflow_completed: () => "workflow completed",
+	workflow_failed: () => "workflow failed",
 };
 export const DEFAULT_LEVEL_CONFIG: LogLevelConfig = {
-  debug: 20,
-  info: 30,
-  warn: 40,
-  error: 50,
+	debug: 20,
+	info: 30,
+	warn: 40,
+	error: 50,
 };
 
 // ─── Owned-repo detection ──────────────────────────────────────────────
@@ -66,15 +127,14 @@ export const DEFAULT_LEVEL_CONFIG: LogLevelConfig = {
 export const OWNED_ORG_PREFIXES = ["loopyd/"] as const;
 
 export const ARCHON_THEME_RGB = {
-  bg: [10, 12, 18],
-  panel: [20, 24, 34],
-  border: [82, 109, 196],
-  accent: [6, 206, 147],
-  accentHot: [146, 108, 214],
-  text: [188, 231, 219],
-  muted: [123, 170, 176],
-  dim: [79, 109, 121],
-  success: [6, 206, 147],
-  warning: [180, 112, 214],
+	bg: [10, 12, 18],
+	panel: [20, 24, 34],
+	border: [82, 109, 196],
+	accent: [6, 206, 147],
+	accentHot: [146, 108, 214],
+	text: [188, 231, 219],
+	muted: [123, 170, 176],
+	dim: [79, 109, 121],
+	success: [6, 206, 147],
+	warning: [180, 112, 214],
 } as const;
-
