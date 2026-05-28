@@ -35,6 +35,11 @@ import {
 	runArchonCommandStreaming,
 	formatArchonOutput,
 } from "./archon-exec";
+import {
+	findLatestRunId,
+	queryRunArtifacts,
+	renderArtifactsSection,
+} from "./artifact-query";
 
 // ─── Error output formatting ──────────────────────────────
 
@@ -399,24 +404,43 @@ export async function handleWorkflowCommand(
 		if (!outcome.run)
 			throw new Error(outcome.error || "Workflow did not return a result.");
 
-		// Strip archon's own log lines from emitted output
-		const cleaned = formatArchonOutput(
-			`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
-			outcome.run,
-			outcome.durationMs,
-		)
-			.split("\n")
-			.filter((l) => !/^\[(?:INF|WRN)\] /m.test(l))
-			.join("\n");
-
-		emitArchonMessage(pi, cleaned, {
-			workflow,
-			query,
-			exitCode: outcome.run.exitCode,
-			command: outcome.run.command,
-			durationMs: outcome.durationMs,
-			pill: toPillLabel(workflow),
-		});
+	// Strip archon's own log lines from emitted output
+	const cleaned = formatArchonOutput(
+		`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+		outcome.run,
+		outcome.durationMs,
+	)
+		.split("\n")
+		.filter((l) => !/^\[(?:INF|WRN)\] /m.test(l))
+		.join("\n");
+	
+	// Query artifacts from Archon DB after completion
+	let artifactsSection = "";
+	const artifacts: import("./types").WorkflowArtifact[] = [];
+	try {
+		const runId = await findLatestRunId(workflow, ctx.cwd || process.cwd());
+		if (runId) {
+			const queried = await queryRunArtifacts(runId);
+			artifacts.push(...queried);
+			artifactsSection = renderArtifactsSection(queried);
+		}
+	} catch (artifactErr) {
+		// Artifact query is best-effort — don't fail the result
+	}
+	
+	const cleanedWithArtifacts = artifactsSection
+		? cleaned + artifactsSection
+		: cleaned;
+	
+	emitArchonMessage(pi, cleanedWithArtifacts, {
+		workflow,
+		query,
+		exitCode: outcome.run.exitCode,
+		command: outcome.run.command,
+		durationMs: outcome.durationMs,
+		pill: toPillLabel(workflow),
+		artifacts: artifacts.length > 0 ? artifacts : undefined,
+	});
 
 		ctx.ui.notify(
 			outcome.run.exitCode === 0

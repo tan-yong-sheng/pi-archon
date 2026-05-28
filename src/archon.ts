@@ -15,10 +15,21 @@ export type {
 	DagNodeInfo,
 	ToolActivity,
 	DagModeParams,
+	ArtifactType,
+	WorkflowArtifact,
+	NodeSummaryRow,
 } from "./types";
 
 export { ProgressBox } from "./ui/progress-box";
 export { DagProgressTracker } from "./dag-tracker";
+export {
+	findLatestRunId,
+	queryRunArtifacts,
+	queryRunNodeSummaries,
+	renderArtifactsSection,
+	artifactIcon,
+	artifactLabel,
+} from "./artifact-query";
 export { tryParseDagEvent, tryParseStderrDagEvent } from "./output-filter";
 export { runPhase, runPipeline } from "./ui/progress-runner";
 export { RunBox } from "./ui/run-box";

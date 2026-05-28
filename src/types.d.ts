@@ -66,6 +66,8 @@ export interface ArchonMessageDetails extends Record<string, unknown> {
 	runs?: number;
 	runId?: string;
 	error?: string;
+	artifacts?: WorkflowArtifact[];
+	nodeSummaries?: NodeSummaryRow[];
 }
 
 export interface RuntimeHealthStatus {
@@ -211,6 +213,30 @@ export type StepState =
 	| "error"
 	| "skipped"
 	| "approval";
+
+// ─── Workflow artifact types ────────────────────────────────────
+
+export type ArtifactType =
+	| "pr"
+	| "commit"
+	| "file_created"
+	| "file_modified"
+	| "branch";
+
+export interface WorkflowArtifact {
+	type: ArtifactType;
+	label: string;
+	url?: string;
+	path?: string;
+}
+
+export interface NodeSummaryRow {
+	nodeId: string;
+	state: string;
+	durationMs?: number;
+	error?: string;
+	outputPreview?: string;
+}
 
 // ─── DAG progress tracking types ────────────────────────────────────
 
