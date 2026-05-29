@@ -23,6 +23,7 @@ import { normalizeWorkflow } from "./archon-ui";
 import { runArchonCommandWithToolUpdates, formatArchonOutput, formatArchonToolResult } from "./archon-exec";
 import { rollupStaleRefs, auditAllSubmoduleRefs, fetchSubmodules, readSubmodulePaths, isOwnedRepo, parseLines } from "./git-util";
 import { buildContextCompletions } from "./command-tree";
+import { handleArchonsCommand } from "./archons-command";
 import { refreshProjectWorkflowNames } from "./workflow-discovery";
 import { ArchonMessagePanel } from "./ui/message-panel";
 
@@ -51,6 +52,24 @@ export default async function onEnable(api: ExtensionAPI): Promise<void> {
       },
     });
     void refreshProjectWorkflowNames(process.cwd()).catch(() => undefined);
+
+    // /archons — quick view of active workflow runs
+    commandApi.registerCommand("archons", {
+        description: "View and manage running Archon workflows (cancel, inspect)",
+        getArgumentCompletions: (prefix: string) => {
+            const items = [
+                { value: "status", label: "Full status from Archon CLI", description: "Query archon workflow status --json" },
+                { value: "cancel", label: "Cancel a running workflow", description: "Cancel by run ID" },
+            ];
+            const filtered = prefix.length > 0
+                ? items.filter((i) => i.value.startsWith(prefix) || i.label.toLowerCase().includes(prefix.toLowerCase()))
+                : items;
+            return filtered.length > 0 ? filtered : null;
+        },
+        handler: async (args: string, ctx: ExtensionCommandContext) => {
+            await handleArchonsCommand(api, args, ctx);
+        },
+    });
     registerArchonTools(api);
   } catch { /* best-effort */ }
 }
@@ -64,3 +83,6 @@ export { isGroup } from "./commands/defs";
 export { archonTree, getAllLeaves, getHandler, resolveTokens, generateFullHelp, generateScopedHelp, generateGroupHelp, isHelpTrigger, buildCompletions, buildContextCompletions } from "./command-tree";
 export type { CompletionItem } from "./command-tree";
 export type { CommandNode, SubCommandMeta, CommandGroupMeta, PositionalArg, FlagDef } from "./commands/defs";
+export { runWorkflowBackground, cancelRun, getActiveRuns, getActiveRun, type ActiveWorkflowRun } from "./workflow-background";
+export { handleArchonsCommand } from "./archons-command";
+export { WorkflowOverlay, fmtElapsed, padLine } from "./ui/workflow-overlay";

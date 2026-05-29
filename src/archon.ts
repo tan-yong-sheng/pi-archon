@@ -142,4 +142,13 @@ export {
 	handleToolCommand,
 } from "./archon-dispatch";
 
+export {
+    runWorkflowBackground,
+    cancelRun,
+    getActiveRuns,
+    getActiveRun,
+    type ActiveWorkflowRun,
+} from "./workflow-background";
+export { handleArchonsCommand } from "./archons-command";
+export { WorkflowOverlay, fmtElapsed, padLine } from "./ui/workflow-overlay";
 export * as constants from "./constants";

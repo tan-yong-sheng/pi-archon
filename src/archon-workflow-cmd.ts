@@ -42,6 +42,7 @@ import {
 	queryLoopIterations,
 	renderArtifactsSection,
 } from "./artifact-query";
+import { runWorkflowBackground } from "./workflow-background";
 
 // ─── Error output formatting ──────────────────────────────
 
@@ -406,16 +407,37 @@ export async function handleWorkflowCommand(
 ): Promise<void> {
 	const query = normalizeString(args) || DEFAULT_QUERY;
 
+	// ── Non-blocking path: background run with overlay popup ──
+	if (ctx.hasUI) {
+		const runId = runWorkflowBackground(pi, workflow, query, ctx);
+		if (runId) {
+			// Started successfully — brief confirmation
+			ctx.ui.notify?.(
+				`Archon ${workflow} started (background).`,
+				"info",
+			);
+			emitArchonMessage(
+				pi,
+				`## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Status:** ◆ running in background\n- **Run ID:** \`${runId}\`\n- **Check:** \`/archons\` to view progress\n`,
+				{
+					workflow,
+					query,
+					runId,
+					pill: toPillLabel(workflow),
+				},
+			);
+			return;
+		}
+		// runWorkflowBackground returned null — fall through to blocking path
+	}
+
+	// ── Blocking path (no UI or background spawn failed) ──────
 	try {
 		const outcome = await runWorkflowForCommand(pi, workflow, query, ctx);
-
 		if (outcome.cancelled) {
 			emitArchonMessage(
 				pi,
-				`## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}
-
-- **Result:** ⚠️ cancelled by user
-`,
+				`## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ⚠️ cancelled by user\n`,
 				{
 					workflow,
 					query,
@@ -426,49 +448,51 @@ export async function handleWorkflowCommand(
 			);
 			return;
 		}
-
 		if (!outcome.run)
-			throw new Error(outcome.error || "Workflow did not return a result.");
+			throw new Error(
+				outcome.error || "Workflow did not return a result.",
+			);
 
-	// Strip archon's own log lines from emitted output
-	const cleaned = formatArchonOutput(
-		`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
-		outcome.run,
-		outcome.durationMs,
-	)
-		.split("\n")
-		.filter((l) => !/^\[(?:INF|WRN)\] /m.test(l))
-		.join("\n");
-	
-	// Query artifacts from Archon DB after completion
-	let artifactsSection = "";
-	const artifacts: import("./types").WorkflowArtifact[] = [];
-	try {
-		const runId = await findLatestRunId(workflow, ctx.cwd || process.cwd());
-		if (runId) {
-			const queried = await queryRunArtifacts(runId);
-			artifacts.push(...queried);
-			artifactsSection = renderArtifactsSection(queried);
+		// Strip archon's own log lines from emitted output
+		const cleaned = formatArchonOutput(
+			`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+			outcome.run,
+			outcome.durationMs,
+		)
+			.split("\n")
+			.filter((l) => !/^\[(?:INF|WRN)\] /m.test(l))
+			.join("\n");
+
+		// Query artifacts from Archon DB after completion
+		let artifactsSection = "";
+		const artifacts: import("./types").WorkflowArtifact[] = [];
+		try {
+			const runId = await findLatestRunId(
+				workflow,
+				ctx.cwd || process.cwd(),
+			);
+			if (runId) {
+				const queried = await queryRunArtifacts(runId);
+				artifacts.push(...queried);
+				artifactsSection = renderArtifactsSection(queried);
+			}
+		} catch (artifactErr) {
+			// Artifact query is best-effort — don't fail the result
 		}
-	} catch (artifactErr) {
-		// Artifact query is best-effort — don't fail the result
-	}
-	
-	const cleanedWithArtifacts = artifactsSection
-		? cleaned + artifactsSection
-		: cleaned;
-	
-	emitArchonMessage(pi, cleanedWithArtifacts, {
-		workflow,
-		query,
-		exitCode: outcome.run.exitCode,
-		command: outcome.run.command,
-		durationMs: outcome.durationMs,
-		pill: toPillLabel(workflow),
-		artifacts: artifacts.length > 0 ? artifacts : undefined,
-	});
 
-		ctx.ui.notify(
+		const cleanedWithArtifacts = artifactsSection
+			? cleaned + artifactsSection
+			: cleaned;
+		emitArchonMessage(pi, cleanedWithArtifacts, {
+			workflow,
+			query,
+			exitCode: outcome.run.exitCode,
+			command: outcome.run.command,
+			durationMs: outcome.durationMs,
+			pill: toPillLabel(workflow),
+			artifacts: artifacts.length > 0 ? artifacts : undefined,
+		});
+		ctx.ui.notify?.(
 			outcome.run.exitCode === 0
 				? `Archon ${workflow} finished.`
 				: `Archon ${workflow} failed (exit ${outcome.run.exitCode}).`,
@@ -476,12 +500,19 @@ export async function handleWorkflowCommand(
 		);
 	} catch (error) {
 		const message = normalizeError(error);
-		emitArchonMessage(pi, formatCommandErrorOutput(workflow, query, message), {
-			workflow,
-			query,
-			error: message,
-			pill: toPillLabel(workflow),
-		});
-		ctx.ui.notify(`Archon ${workflow} failed: ${message}`, "error");
+		emitArchonMessage(
+			pi,
+			formatCommandErrorOutput(workflow, query, message),
+			{
+				workflow,
+				query,
+				error: message,
+				pill: toPillLabel(workflow),
+			},
+		);
+		ctx.ui.notify?.(
+			`Archon ${workflow} failed: ${message}`,
+			"error",
+		);
 	}
 }
