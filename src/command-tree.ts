@@ -112,21 +112,25 @@ export function buildCompletions(): CompletionItem[] {
 
 /**
  * Context-aware completions: given the current partial argument text,
- * return only the relevant next-level suggestions.
+ * return suggestions whose `value` is the **full replacement** for the
+ * argument string. Pi's applyCompletion replaces the entire prefix
+ * (argumentText) with the selected item's value, so values must include
+ * the already-typed path tokens.
  *
- * E.g. "" → all top-level groups/commands
- *     "workflow" → workflow group + its children (run, history)
- *     "workflow run" → workflow run command + workflow names
- *     "manage" → manage group + its children (status, cancel, etc.)
+ * E.g. ""              -> "workflow", "manage", "server", "web"
+ *      "workflow"      -> "workflow run", "workflow history",
+ *                         "workflow run <name>", "workflow history <name>"
+ *      "workflow run"  -> "workflow run archon-hello", "workflow run archon-ping-pong"
  */
 export function buildContextCompletions(
 	partialInput: string,
 ): CompletionItem[] {
 	const tokens = partialInput.trim().split(/\s+/).filter(Boolean);
 
-	// No tokens → show top-level groups and commands
+	// No tokens -> show top-level groups and commands
 	if (tokens.length === 0) {
 		const items: CompletionItem[] = [];
+
 		// Show top-level groups
 		for (const group of scopedGroups) {
 			if (!group.path.includes(" ")) {
@@ -136,6 +140,7 @@ export function buildContextCompletions(
 				});
 			}
 		}
+
 		// Show top-level commands (direct children of root)
 		for (const cmd of scopedCommands) {
 			if (!cmd.path.includes(" ")) {
@@ -145,6 +150,7 @@ export function buildContextCompletions(
 				});
 			}
 		}
+
 		items.push(
 			{ value: "-h", label: "Show per-command help" },
 			{ value: "--help", label: "Show per-command help (long form)" },
@@ -156,7 +162,9 @@ export function buildContextCompletions(
 	// Try to resolve the tokens to find where we are in the tree
 	const result = resolveTokens([...tokens]);
 
-	// If resolved to a group → show its children
+	// If resolved to a group -> show its children
+	// VALUES must include the group path prefix so pi replaces the
+	// entire argument text with the full path, not just the child name.
 	if (result.meta && isGroup(result.meta)) {
 		const groupPath = result.meta.path;
 		const items: CompletionItem[] = [];
@@ -165,13 +173,13 @@ export function buildContextCompletions(
 			for (const [name, child] of children) {
 				if (isGroup(child)) {
 					items.push({
-						value: child.path,
+						value: child.path, // e.g. "workflow run"
 						label: child.description || child.path,
 					});
 				} else {
 					items.push({
 						value: formatInvocationPath(
-							child.path,
+							child.path, // e.g. "workflow run"
 							(child as ScopedCommandMeta).args,
 						),
 						label: child.description || child.path,
@@ -180,29 +188,44 @@ export function buildContextCompletions(
 			}
 		}
 
-		// Special: if we're in the "workflow run" or "workflow history" context,
-		// also suggest workflow names
+		// Special: if we're in the "workflow" group, also suggest
+		// workflow names with the full group path prefix
 		if (groupPath === "workflow") {
-			for (const workflow of readProjectWorkflowNamesFromDisk(process.cwd())) {
-				items.push({ value: `run ${workflow}`, label: `Run ${workflow}` });
+			for (const workflow of readProjectWorkflowNamesFromDisk(
+				process.cwd(),
+			)) {
 				items.push({
-					value: `history ${workflow}`,
+					value: `workflow run ${workflow}`,
+					label: `Run ${workflow}`,
+				});
+				items.push({
+					value: `workflow history ${workflow}`,
 					label: `History for ${workflow}`,
 				});
 			}
 		}
 
-		items.push({ value: "-h", label: "Show help" });
+		items.push({ value: `${groupPath} -h`, label: "Show help" });
 		return items;
 	}
 
-	// If resolved to a command → show workflow name completions if applicable
+	// If resolved to a command -> show positional arg completions if applicable
 	if (result.handler) {
-		const handlerPath = result.path;
-		if (handlerPath === "workflow:run" || handlerPath === "workflow:history") {
+		const handlerPath = result.path; // e.g. "workflow:run"
+		const commandPath = handlerPath.replace(/:/g, " "); // e.g. "workflow run"
+		if (
+			handlerPath === "workflow:run" ||
+			handlerPath === "workflow:history"
+		) {
 			const items: CompletionItem[] = [];
-			for (const workflow of readProjectWorkflowNamesFromDisk(process.cwd())) {
-				items.push({ value: workflow, label: workflow });
+			for (const workflow of readProjectWorkflowNamesFromDisk(
+				process.cwd(),
+			)) {
+				// Full replacement value: "workflow run <workflow-name>"
+				items.push({
+					value: `${commandPath} ${workflow}`,
+					label: workflow,
+				});
 			}
 			return items;
 		}
@@ -210,7 +233,7 @@ export function buildContextCompletions(
 		return [];
 	}
 
-	// Tokens didn't resolve → fall back to full completion list filtered by prefix
+	// Tokens didn't resolve -> fall back to full completion list filtered by prefix
 	const allCompletions = buildCompletions();
 	const lastToken = tokens[tokens.length - 1].toLowerCase();
 	return allCompletions.filter(
@@ -219,6 +242,8 @@ export function buildContextCompletions(
 			c.value.toLowerCase().includes(lastToken),
 	);
 }
+
+
 
 export function getAllLeaves(): ScopedCommandMeta[] {
 	return [...scopedCommands];
