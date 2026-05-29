@@ -41,9 +41,10 @@ export default async function onEnable(api: ExtensionAPI): Promise<void> {
       description: "Archon workspace launcher — project workflows, cleanup, web dev",
       getArgumentCompletions: (prefix: string) => {
         const completions = buildCompletions();
-        return prefix.length > 0
+        const filtered = prefix.length > 0
           ? completions.filter((c) => c.value.toLowerCase().startsWith(prefix.toLowerCase()))
-          : null;
+          : completions;
+            return filtered.length > 0 ? filtered : null;
       },
       handler: async (args: string, ctx: ExtensionCommandContext) => {
         try {
