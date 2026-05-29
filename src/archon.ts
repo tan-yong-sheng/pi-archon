@@ -19,6 +19,7 @@ export type {
 	WorkflowArtifact,
 	NodeSummaryRow,
 	LoopIterationInfo,
+	WorkflowRunRecord,
 } from "./types";
 
 export { ProgressBox } from "./ui/progress-box";
@@ -29,6 +30,8 @@ export {
 	queryRunArtifacts,
 	queryRunNodeSummaries,
 	queryLoopIterations,
+	queryRecentRuns,
+	formatRunRecordLabel,
 	renderArtifactsSection,
 	artifactIcon,
 	artifactLabel,
@@ -110,6 +113,9 @@ export {
 	handleWorkflowCommand,
 	runWorkflowWithToolUpdates,
 } from "./archon-workflow-cmd";
+export {
+	handleWorkflowHistoryCommand,
+} from "./workflow-history";
 export {
 	handleArchonStatusCommand,
 	handleArchonWorkflowCancelCommand,

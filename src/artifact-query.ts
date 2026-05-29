@@ -457,6 +457,115 @@ export async function findActiveRunId(
 	}
 }
 
+// ─── Run history query ──────────────────────────────────────────
+
+export interface WorkflowRunRecord {
+	id: string;
+	workflowName: string;
+	status: string;
+	startedAt: string;
+	durationMs?: number;
+	error?: string;
+}
+
+/**
+ * Query recent workflow run records from the DB.
+ * Returns runs ordered by most recent first.
+ */
+export async function queryRecentRuns(
+	workingPath: string,
+	opts?: { limit?: number; workflowName?: string },
+): Promise<WorkflowRunRecord[]> {
+	if (!fs.existsSync(ARCHON_DB_PATH)) return [];
+
+	const limit = opts?.limit ?? 20;
+	const filterWorkflow = opts?.workflowName;
+
+	const whereClauses = ["working_path = ?"];
+	const params: string[] = [workingPath];
+
+	if (filterWorkflow) {
+		whereClauses.push("workflow_name = ?");
+		params.push(filterWorkflow);
+	}
+
+	const sql = `
+		SELECT id, workflow_name, status, started_at,
+			CAST((julianday(COALESCE(completed_at, datetime('now'))) - julianday(started_at)) * 86400000 AS INTEGER) as duration_ms,
+			error_message
+		FROM remote_agent_workflow_runs
+		WHERE ${whereClauses.join(" AND ")}
+		ORDER BY started_at DESC
+		LIMIT ${String(limit)}
+	`;
+
+	try {
+		const { stdout } = await execFileAsync("sqlite3", [
+			ARCHON_DB_PATH,
+			"-json",
+			"-cmd",
+			`.mode json`,
+			sql,
+			...params,
+		]);
+		const rows = JSON.parse(stdout.trim() || "[]") as Array<{
+			id: string;
+			workflow_name: string;
+			status: string;
+			started_at: string;
+			duration_ms: number | null;
+			error_message: string | null;
+		}>;
+
+		return rows.map((row) => ({
+			id: row.id,
+			workflowName: row.workflow_name,
+			status: row.status,
+			startedAt: row.started_at,
+			durationMs: row.duration_ms ?? undefined,
+			error: row.error_message ?? undefined,
+		}));
+	} catch (queryErr) {
+		return [];
+	}
+}
+
+/**
+ * Render a workflow run record as a one-line summary for the SelectList.
+ */
+export function formatRunRecordLabel(run: WorkflowRunRecord): string {
+	const statusIcon =
+		run.status === "completed"
+			? "✓"
+			: run.status === "failed"
+				? "✗"
+				: run.status === "running"
+					? "●"
+					: "○";
+	const duration =
+		run.durationMs != null
+			? ` ${Math.round(run.durationMs / 1000)}s`
+			: "";
+	const ago = formatTimeAgo(run.startedAt);
+	return `${statusIcon} ${run.workflowName}${duration} · ${ago}`;
+}
+
+/**
+ * Format an ISO timestamp as a human-readable relative time string.
+ */
+function formatTimeAgo(isoTimestamp: string): string {
+	try {
+		const then = new Date(isoTimestamp).getTime();
+		const diffSec = Math.floor((Date.now() - then) / 1000);
+		if (diffSec < 60) return "just now";
+		if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+		if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+		return `${Math.floor(diffSec / 86400)}d ago`;
+	} catch (formatErr) {
+		return isoTimestamp;
+	}
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────
 
 const VALID_ARTIFACT_TYPES = new Set<string>([

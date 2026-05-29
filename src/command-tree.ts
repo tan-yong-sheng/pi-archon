@@ -69,6 +69,7 @@ export function buildCompletions(): CompletionItem[] {
   }
   for (const workflow of readProjectWorkflowNamesFromDisk(process.cwd())) {
     items.push({ value: `workflow run ${workflow}`, label: `Run workflow ${workflow}` });
+    items.push({ value: `workflow history ${workflow}`, label: `History for ${workflow}` });
   }
   items.push({ value: "-h", label: "Show per-command help" }, { value: "--help", label: "Show per-command help (long form)" }, { value: "help", label: "Show full help" });
   return items;

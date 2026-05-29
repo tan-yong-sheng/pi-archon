@@ -4,7 +4,7 @@ import { ManageCancelHandler, ManageStatusHandler } from "./manage-command";
 import { ServerStartHandler, ServerStatusHandler, ServerStopHandler } from "./server-command";
 import { UpdateHandler } from "./update-command";
 import { WebStartHandler, WebStatusHandler, WebStopHandler } from "./web-command";
-import { WorkflowRunHandler } from "./workflow-command";
+import { WorkflowRunHandler, WorkflowHistoryHandler } from "./workflow-command";
 
 export function defineHandlerRegistry<const T extends readonly (readonly [ArchonHandlerKey, ArchonHandler])[]>(entries: T): Map<ArchonHandlerKey, ArchonHandler> {
   return new Map<ArchonHandlerKey, ArchonHandler>(entries);
@@ -16,6 +16,7 @@ export function isHandlerKey(value: string): value is ArchonHandlerKey {
 
 export type ArchonHandlerKey =
   | "workflow:run"
+  | "workflow:history"
   | "manage:status"
   | "manage:cancel"
   | "manage:cleanup"
@@ -30,6 +31,7 @@ export type ArchonHandlerKey =
 
 export const handlerRegistry = defineHandlerRegistry([
   ["workflow:run", new WorkflowRunHandler()],
+	["workflow:history", new WorkflowHistoryHandler()],
   ["manage:status", new ManageStatusHandler()],
   ["manage:cancel", new ManageCancelHandler()],
   ["manage:cleanup", new CleanupHandler()],

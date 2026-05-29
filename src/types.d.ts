@@ -238,6 +238,15 @@ export interface NodeSummaryRow {
 	outputPreview?: string;
 }
 
+export interface WorkflowRunRecord {
+	id: string;
+	workflowName: string;
+	status: string;
+	startedAt: string;
+	durationMs?: number;
+	error?: string;
+}
+
 // ─── DAG progress tracking types ────────────────────────────────────
 
 /** Discriminated DAG event emitted by Archon CLI stderr or --json-events */

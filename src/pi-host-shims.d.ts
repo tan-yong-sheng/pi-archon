@@ -34,6 +34,8 @@ declare module "@mariozechner/pi-tui" {
 
   export class Container {
     addChild(...args: any[]): void;
+    render(width: number): string[];
+    invalidate(): void;
   }
 
   export class Spacer {
@@ -50,4 +52,34 @@ declare module "@mariozechner/pi-tui" {
 
   export function truncateToWidth(value: string, width: number): string;
   export function visibleWidth(value: string): number;
+
+  export interface SelectItem {
+    value: string;
+    label: string;
+    description?: string;
+  }
+
+  export interface SelectListTheme {
+    selectedPrefix?: (text: string) => string;
+    selectedText?: (text: string) => string;
+    description?: (text: string) => string;
+    scrollInfo?: (text: string) => string;
+    noMatch?: (text: string) => string;
+  }
+
+  export class SelectList {
+    constructor(
+      items: SelectItem[],
+      maxHeight: number,
+      theme?: SelectListTheme,
+    );
+    onSelect: (item: SelectItem) => void;
+    onCancel: () => void;
+    handleInput(data: string): void;
+    render(width: number): string[];
+  }
+
+  export class DynamicBorder {
+    constructor(borderFn: (s: string) => string);
+  }
 }
