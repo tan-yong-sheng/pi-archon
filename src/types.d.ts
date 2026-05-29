@@ -264,9 +264,24 @@ export type DagEvent =
 			toolName: string;
 			durationMs: number;
 	  }
-	| { type: "loop_iteration_started"; nodeId: string; iteration: number; maxIterations: number }
-	| { type: "loop_iteration_completed"; nodeId: string; iteration: number; duration?: number }
-	| { type: "loop_iteration_failed"; nodeId: string; iteration: number; error: string }
+	| {
+			type: "loop_iteration_started";
+			nodeId: string;
+			iteration: number;
+			maxIterations: number;
+	  }
+	| {
+			type: "loop_iteration_completed";
+			nodeId: string;
+			iteration: number;
+			duration?: number;
+	  }
+	| {
+			type: "loop_iteration_failed";
+			nodeId: string;
+			iteration: number;
+			error: string;
+	  }
 	| { type: "workflow_completed"; duration?: number }
 	| { type: "workflow_failed"; error?: string };
 

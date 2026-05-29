@@ -5,7 +5,10 @@
  * shows recent runs and lets the user select one to see details
  * (node states, artifacts, duration, error info).
  */
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+} from "@mariozechner/pi-coding-agent";
 import {
 	Container,
 	DynamicBorder,
@@ -99,22 +102,16 @@ export async function handleWorkflowHistoryCommand(
 			const title = workflowName
 				? `Workflow History: ${workflowName}`
 				: "Workflow History";
-			container.addChild(
-				new Text(theme.fg("accent", theme.bold(title)), 1, 0),
-			);
+			container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
 
 			// SelectList
-			const selectList = new SelectList(
-				items,
-				Math.min(items.length, 12),
-				{
-					selectedPrefix: (t) => theme.fg("accent", t),
-					selectedText: (t) => theme.fg("accent", t),
-					description: (t) => theme.fg("muted", t),
-					scrollInfo: (t) => theme.fg("dim", t),
-					noMatch: (t) => theme.fg("warning", t),
-				},
-			);
+			const selectList = new SelectList(items, Math.min(items.length, 12), {
+				selectedPrefix: (t) => theme.fg("accent", t),
+				selectedText: (t) => theme.fg("accent", t),
+				description: (t) => theme.fg("muted", t),
+				scrollInfo: (t) => theme.fg("dim", t),
+				noMatch: (t) => theme.fg("warning", t),
+			});
 
 			selectList.onSelect = (item) => done(item.value);
 			selectList.onCancel = () => done(null);
@@ -124,10 +121,7 @@ export async function handleWorkflowHistoryCommand(
 			// Help text
 			container.addChild(
 				new Text(
-					theme.fg(
-						"dim",
-						"↑↓ navigate • enter select • esc cancel",
-					),
+					theme.fg("dim", "↑↓ navigate • enter select • esc cancel"),
 					1,
 					0,
 				),
@@ -175,9 +169,7 @@ export async function handleWorkflowHistoryCommand(
 		const container = new Container();
 
 		// Top border
-		container.addChild(
-			new DynamicBorder((s: string) => theme.fg("accent", s)),
-		);
+		container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
 		// Run header
 		const headerText = formatRunDetailHeader(detailData.run);
@@ -185,9 +177,7 @@ export async function handleWorkflowHistoryCommand(
 
 		// Node summaries
 		if (detailData.nodes.length > 0) {
-			container.addChild(
-				new Text(theme.fg("text", "── Nodes ──"), 1, 0),
-			);
+			container.addChild(new Text(theme.fg("text", "── Nodes ──"), 1, 0));
 			for (const node of detailData.nodes) {
 				const nodeLine = formatNodeSummary(node, theme);
 				container.addChild(new Text(nodeLine, 0, 0));
@@ -196,9 +186,7 @@ export async function handleWorkflowHistoryCommand(
 
 		// Artifacts
 		if (detailData.artifacts.length > 0) {
-			container.addChild(
-				new Text(theme.fg("text", "── Artifacts ──"), 1, 0),
-			);
+			container.addChild(new Text(theme.fg("text", "── Artifacts ──"), 1, 0));
 			for (const artifact of detailData.artifacts) {
 				const artifactLine = formatArtifactLine(artifact, theme);
 				container.addChild(new Text(artifactLine, 0, 0));
@@ -206,10 +194,7 @@ export async function handleWorkflowHistoryCommand(
 		}
 
 		// Empty state
-		if (
-			detailData.nodes.length === 0 &&
-			detailData.artifacts.length === 0
-		) {
+		if (detailData.nodes.length === 0 && detailData.artifacts.length === 0) {
 			container.addChild(
 				new Text(
 					theme.fg("muted", "No node or artifact data available."),
@@ -220,14 +205,10 @@ export async function handleWorkflowHistoryCommand(
 		}
 
 		// Help text
-		container.addChild(
-			new Text(theme.fg("dim", "Press esc to close"), 1, 0),
-		);
+		container.addChild(new Text(theme.fg("dim", "Press esc to close"), 1, 0));
 
 		// Bottom border
-		container.addChild(
-			new DynamicBorder((s: string) => theme.fg("accent", s)),
-		);
+		container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
 		return {
 			render: (w: number) => container.render(w),

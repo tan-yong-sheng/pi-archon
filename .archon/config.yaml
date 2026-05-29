@@ -1,0 +1,4 @@
+assistant: claude
+
+worktree:
+  baseBranch: main

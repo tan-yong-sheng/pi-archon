@@ -119,7 +119,9 @@ export function buildCompletions(): CompletionItem[] {
  *     "workflow run" → workflow run command + workflow names
  *     "manage" → manage group + its children (status, cancel, etc.)
  */
-export function buildContextCompletions(partialInput: string): CompletionItem[] {
+export function buildContextCompletions(
+	partialInput: string,
+): CompletionItem[] {
 	const tokens = partialInput.trim().split(/\s+/).filter(Boolean);
 
 	// No tokens → show top-level groups and commands
@@ -128,13 +130,19 @@ export function buildContextCompletions(partialInput: string): CompletionItem[] 
 		// Show top-level groups
 		for (const group of scopedGroups) {
 			if (!group.path.includes(" ")) {
-				items.push({ value: group.path, label: group.description || group.path });
+				items.push({
+					value: group.path,
+					label: group.description || group.path,
+				});
 			}
 		}
 		// Show top-level commands (direct children of root)
 		for (const cmd of scopedCommands) {
 			if (!cmd.path.includes(" ")) {
-				items.push({ value: formatInvocationPath(cmd.path, cmd.args), label: cmd.description || cmd.path });
+				items.push({
+					value: formatInvocationPath(cmd.path, cmd.args),
+					label: cmd.description || cmd.path,
+				});
 			}
 		}
 		items.push(
@@ -156,9 +164,18 @@ export function buildContextCompletions(partialInput: string): CompletionItem[] 
 		if (children) {
 			for (const [name, child] of children) {
 				if (isGroup(child)) {
-					items.push({ value: child.path, label: child.description || child.path });
+					items.push({
+						value: child.path,
+						label: child.description || child.path,
+					});
 				} else {
-					items.push({ value: formatInvocationPath(child.path, (child as ScopedCommandMeta).args), label: child.description || child.path });
+					items.push({
+						value: formatInvocationPath(
+							child.path,
+							(child as ScopedCommandMeta).args,
+						),
+						label: child.description || child.path,
+					});
 				}
 			}
 		}
@@ -168,7 +185,10 @@ export function buildContextCompletions(partialInput: string): CompletionItem[] 
 		if (groupPath === "workflow") {
 			for (const workflow of readProjectWorkflowNamesFromDisk(process.cwd())) {
 				items.push({ value: `run ${workflow}`, label: `Run ${workflow}` });
-				items.push({ value: `history ${workflow}`, label: `History for ${workflow}` });
+				items.push({
+					value: `history ${workflow}`,
+					label: `History for ${workflow}`,
+				});
 			}
 		}
 
@@ -193,7 +213,11 @@ export function buildContextCompletions(partialInput: string): CompletionItem[] 
 	// Tokens didn't resolve → fall back to full completion list filtered by prefix
 	const allCompletions = buildCompletions();
 	const lastToken = tokens[tokens.length - 1].toLowerCase();
-	return allCompletions.filter((c) => c.value.toLowerCase().startsWith(lastToken) || c.value.toLowerCase().includes(lastToken));
+	return allCompletions.filter(
+		(c) =>
+			c.value.toLowerCase().startsWith(lastToken) ||
+			c.value.toLowerCase().includes(lastToken),
+	);
 }
 
 export function getAllLeaves(): ScopedCommandMeta[] {

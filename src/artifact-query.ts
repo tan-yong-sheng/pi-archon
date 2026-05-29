@@ -543,9 +543,7 @@ export function formatRunRecordLabel(run: WorkflowRunRecord): string {
 					? "●"
 					: "○";
 	const duration =
-		run.durationMs != null
-			? ` ${Math.round(run.durationMs / 1000)}s`
-			: "";
+		run.durationMs != null ? ` ${Math.round(run.durationMs / 1000)}s` : "";
 	const ago = formatTimeAgo(run.startedAt);
 	return `${statusIcon} ${run.workflowName}${duration} · ${ago}`;
 }

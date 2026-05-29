@@ -1,0 +1,25 @@
+name: archon-hello
+description: >
+  Smoke-test workflow: prints project info via a bash node, then has
+  an AI node summarise it. Two-node DAG, no external deps, finishes
+  in under a minute. Use this to verify pi-archon progress rendering.
+
+nodes:
+  - id: gather-info
+    bash: |
+      echo "=== Archon Hello — project info ==="
+      echo "cwd:   $(pwd)"
+      echo "files: $(find . -name '*.ts' -not -path './node_modules/*' | wc -l) TypeScript files"
+      echo "git:   $(git rev-parse --short HEAD 2>/dev/null || echo 'not a git repo')"
+      echo "time:  $(date -Iseconds)"
+    timeout: 10000
+
+  - id: summarise
+    prompt: |
+      You just received project info from a bash node. Write a brief,
+      friendly one-paragraph summary of the project for the user.
+      Keep it under 100 words.
+
+      Project info:
+      $gather-info.output
+    depends_on: [gather-info]

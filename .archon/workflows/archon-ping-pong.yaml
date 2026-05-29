@@ -1,0 +1,29 @@
+name: archon-ping-pong
+description: >
+  Three-node DAG with parallel fan-out to test pi-archon DAG progress
+  rendering. Two bash nodes run in parallel (fast), then a prompt
+  node synthesises their output. Total runtime ~15s.
+
+nodes:
+  - id: ping
+    bash: |
+      echo "🏓 PING from node 1"
+      sleep 2
+      echo "Done after 2s — found $(find . -name '*.ts' -not -path './node_modules/*' | wc -l) TS files"
+    timeout: 10000
+
+  - id: pong
+    bash: |
+      echo "🏓 PONG from node 2"
+      sleep 3
+      echo "Done after 3s — git HEAD is $(git rev-parse --short HEAD 2>/dev/null || echo 'n/a')"
+    timeout: 10000
+
+  - id: synthesise
+    prompt: |
+      Combine the outputs of the two parallel nodes into a single
+      two-line summary for the user. No markdown, just plain text.
+
+      Ping output: $ping.output
+      Pong output: $pong.output
+    depends_on: [ping, pong]

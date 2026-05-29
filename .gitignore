@@ -4,3 +4,7 @@ package-lock.json
 npm-debug.log*
 .DS_Store
 .serena/.pi-lens/
+
+# Archon runtime artifacts
+.archon/state/
+.archon/.env

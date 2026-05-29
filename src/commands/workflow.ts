@@ -15,8 +15,7 @@ import type { CommandGroupMeta, SubCommandMeta } from "./defs";
 export class RunWorkflowCommand extends ArchonCommand {
 	static override meta: SubCommandMeta = {
 		name: "run",
-		description:
-			"Run project workflow by name from `.archon/workflows/`.",
+		description: "Run project workflow by name from `.archon/workflows/`.",
 		category: "Workflows",
 		args: [
 			{
@@ -60,9 +59,7 @@ export class RunWorkflowCommand extends ArchonCommand {
 		if (!resolved) {
 			emitArchonMessage(
 				pi,
-				formatArchonMessage(
-					`- **Unknown workflow:** \`${workflow}\``,
-				),
+				formatArchonMessage(`- **Unknown workflow:** \`${workflow}\``),
 			);
 			return;
 		}
@@ -93,8 +90,7 @@ export class WorkflowHistoryCommand extends ArchonCommand {
 
 export const workflowsGroup: CommandGroupMeta = {
 	name: "workflow",
-	description:
-		"Run project workflows discovered from `.archon/workflows/`.",
+	description: "Run project workflows discovered from `.archon/workflows/`.",
 	category: "Workflows",
 	children: [RunWorkflowCommand.meta, WorkflowHistoryCommand.meta],
 };
