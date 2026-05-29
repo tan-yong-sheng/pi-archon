@@ -164,9 +164,7 @@ export async function queryRunArtifacts(
  * Query node summaries for a specific workflow run.
  * Returns per-node state/duration/error information.
  */
-export async function queryRunNodeSummaries(
-	runId: string,
-): Promise<
+export async function queryRunNodeSummaries(runId: string): Promise<
 	Array<{
 		nodeId: string;
 		state: string;
@@ -250,9 +248,7 @@ export async function queryRunNodeSummaries(
 						state: "failed",
 						durationMs: started != null ? ts - started : undefined,
 						error:
-							typeof data.error === "string"
-								? data.error
-								: "Unknown error",
+							typeof data.error === "string" ? data.error : "Unknown error",
 					});
 					break;
 				}
@@ -271,9 +267,7 @@ export async function queryRunNodeSummaries(
  * Render artifacts as a markdown section suitable for inclusion
  * in the workflow result message.
  */
-export function renderArtifactsSection(
-	artifacts: WorkflowArtifact[],
-): string {
+export function renderArtifactsSection(artifacts: WorkflowArtifact[]): string {
 	if (artifacts.length === 0) return "";
 
 	const lines: string[] = ["", "### Artifacts", ""];
@@ -281,17 +275,186 @@ export function renderArtifactsSection(
 		const icon = artifactIcon(artifact.type);
 		const typeLabel = artifactLabel(artifact.type);
 		if (artifact.url) {
-			lines.push(`- ${icon} **${typeLabel}:** [${artifact.label}](${artifact.url})`);
-		} else if (artifact.path) {
 			lines.push(
-				`- ${icon} **${typeLabel}:** \`${artifact.path}\``,
+				`- ${icon} **${typeLabel}:** [${artifact.label}](${artifact.url})`,
 			);
+		} else if (artifact.path) {
+			lines.push(`- ${icon} **${typeLabel}:** \`${artifact.path}\``);
 		} else {
 			lines.push(`- ${icon} **${typeLabel}:** ${artifact.label}`);
 		}
 	}
 	lines.push("");
 	return lines.join("\n");
+}
+
+// ─── Loop iteration query ────────────────────────────────────────
+
+/**
+ * Query loop iteration events for a running workflow from the events DB.
+ * Used during the run to supplement CLI stderr (which doesn't emit
+ * loop iteration events) so the ProgressBox can show iteration counts.
+ *
+ * Returns an array of DagEvent-like loop iteration objects.
+ */
+export async function queryLoopIterations(runId: string): Promise<
+	Array<
+		| {
+				type: "loop_iteration_started";
+				nodeId: string;
+				iteration: number;
+				maxIterations: number;
+		  }
+		| {
+				type: "loop_iteration_completed";
+				nodeId: string;
+				iteration: number;
+				duration?: number;
+		  }
+		| {
+				type: "loop_iteration_failed";
+				nodeId: string;
+				iteration: number;
+				error: string;
+		  }
+	>
+> {
+	if (!fs.existsSync(ARCHON_DB_PATH)) return [];
+
+	const sql = `
+		SELECT event_type, step_name, data
+		FROM remote_agent_workflow_events
+		WHERE workflow_run_id = ?
+			AND event_type IN (
+				'loop_iteration_started',
+				'loop_iteration_completed',
+				'loop_iteration_failed'
+			)
+		ORDER BY created_at ASC
+	`;
+
+	try {
+		const { stdout } = await execFileAsync("sqlite3", [
+			ARCHON_DB_PATH,
+			"-json",
+			"-cmd",
+			`.mode json`,
+			sql,
+			runId,
+		]);
+		const rows = JSON.parse(stdout.trim() || "[]") as Array<{
+			event_type: string;
+			step_name: string | null;
+			data: string;
+		}>;
+
+		const events: Array<
+			| {
+					type: "loop_iteration_started";
+					nodeId: string;
+					iteration: number;
+					maxIterations: number;
+			  }
+			| {
+					type: "loop_iteration_completed";
+					nodeId: string;
+					iteration: number;
+					duration?: number;
+			  }
+			| {
+					type: "loop_iteration_failed";
+					nodeId: string;
+					iteration: number;
+					error: string;
+			  }
+		> = [];
+
+		for (const row of rows) {
+			const nodeId = row.step_name ?? "";
+			if (!nodeId) continue;
+			let data: Record<string, unknown> = {};
+			try {
+				data = JSON.parse(row.data) as Record<string, unknown>;
+			} catch (parseErr) {
+				// Malformed event data — skip
+			}
+
+			const iteration = typeof data.iteration === "number" ? data.iteration : 0;
+
+			switch (row.event_type) {
+				case "loop_iteration_started": {
+					const maxIterations =
+						typeof data.maxIterations === "number" ? data.maxIterations : 0;
+					events.push({
+						type: "loop_iteration_started",
+						nodeId,
+						iteration,
+						maxIterations,
+					});
+					break;
+				}
+				case "loop_iteration_completed": {
+					const duration =
+						typeof data.duration === "number" ? data.duration : undefined;
+					events.push({
+						type: "loop_iteration_completed",
+						nodeId,
+						iteration,
+						duration,
+					});
+					break;
+				}
+				case "loop_iteration_failed": {
+					const error =
+						typeof data.error === "string" ? data.error : "Unknown error";
+					events.push({
+						type: "loop_iteration_failed",
+						nodeId,
+						iteration,
+						error,
+					});
+					break;
+				}
+			}
+		}
+
+		return events;
+	} catch (queryErr) {
+		return [];
+	}
+}
+
+/**
+ * Find the most recent running workflow run ID (across all workflows)
+ * in the DB. Used for periodic iteration polling during a run.
+ */
+export async function findActiveRunId(
+	workingPath: string,
+): Promise<string | undefined> {
+	if (!fs.existsSync(ARCHON_DB_PATH)) return undefined;
+
+	const sql = `
+		SELECT id
+		FROM remote_agent_workflow_runs
+		WHERE working_path = ? AND status IN ('running', 'pending')
+		ORDER BY started_at DESC
+		LIMIT 1
+	`;
+
+	try {
+		const { stdout } = await execFileAsync("sqlite3", [
+			ARCHON_DB_PATH,
+			"-json",
+			"-cmd",
+			`.mode json`,
+			sql,
+			workingPath,
+		]);
+		const rows = JSON.parse(stdout.trim() || "[]") as Array<{ id: string }>;
+		return rows[0]?.id;
+	} catch (queryErr) {
+		return undefined;
+	}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────

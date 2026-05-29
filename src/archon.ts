@@ -18,14 +18,17 @@ export type {
 	ArtifactType,
 	WorkflowArtifact,
 	NodeSummaryRow,
+	LoopIterationInfo,
 } from "./types";
 
 export { ProgressBox } from "./ui/progress-box";
 export { DagProgressTracker } from "./dag-tracker";
 export {
 	findLatestRunId,
+	findActiveRunId,
 	queryRunArtifacts,
 	queryRunNodeSummaries,
+	queryLoopIterations,
 	renderArtifactsSection,
 	artifactIcon,
 	artifactLabel,

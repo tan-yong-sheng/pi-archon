@@ -255,6 +255,9 @@ export type DagEvent =
 			toolName: string;
 			durationMs: number;
 	  }
+	| { type: "loop_iteration_started"; nodeId: string; iteration: number; maxIterations: number }
+	| { type: "loop_iteration_completed"; nodeId: string; iteration: number; duration?: number }
+	| { type: "loop_iteration_failed"; nodeId: string; iteration: number; error: string }
 	| { type: "workflow_completed"; duration?: number }
 	| { type: "workflow_failed"; error?: string };
 
@@ -266,6 +269,13 @@ export type DagNodeState =
 	| "skipped"
 	| "approval";
 
+export interface LoopIterationInfo {
+	iteration: number;
+	state: "running" | "completed" | "failed";
+	duration?: number;
+	error?: string;
+}
+
 export interface DagNodeInfo {
 	id: string;
 	state: DagNodeState;
@@ -275,6 +285,10 @@ export interface DagNodeInfo {
 	approvalMessage?: string;
 	activeTool?: string;
 	startedAt?: number;
+	/** Loop iteration tracking — only set for loop nodes */
+	iterations?: LoopIterationInfo[];
+	currentIteration?: number;
+	maxIterations?: number;
 }
 
 export interface ToolActivity {

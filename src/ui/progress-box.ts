@@ -385,6 +385,13 @@ export class ProgressBox extends TuiBase {
 			text += this.fireDim(` ${formatElapsed(elapsed)}`);
 		}
 
+		// Loop iteration badge
+		if (node.currentIteration != null && node.maxIterations != null) {
+			text += this.fireDim(` ${this.fireAccent(`${node.currentIteration}/${node.maxIterations}`)}`);
+		} else if (node.currentIteration != null) {
+			text += this.fireDim(` iter ${node.currentIteration}`);
+		}
+
 		// Active tool indicator
 		if (node.activeTool && node.state === "running") {
 			text += this.fireDim(` → ${this.fireAccent(node.activeTool)}`);

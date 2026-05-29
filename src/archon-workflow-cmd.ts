@@ -37,7 +37,9 @@ import {
 } from "./archon-exec";
 import {
 	findLatestRunId,
+	findActiveRunId,
 	queryRunArtifacts,
+	queryLoopIterations,
 	renderArtifactsSection,
 } from "./artifact-query";
 
@@ -118,6 +120,7 @@ async function runWorkflowForCommand(
 				finished = true;
 				box.stop();
 				clearInterval(statusSync);
+				clearInterval(loopPoll);
 				ctx.ui.setStatus(STATUS_KEY_RUNNING, undefined);
 				ctx.ui.setWidget("archon-progress", undefined);
 				done(value);
@@ -269,6 +272,28 @@ async function runWorkflowForCommand(
 				}
 			}, PROGRESS_UPDATE_MS);
 
+			// ── Loop iteration DB poll ─────────────────────────────────────
+			// Since Archon CLI does not emit loop_iteration_* events to stderr,
+			// we periodically query the DB to feed iteration progress into the tracker.
+			const lastAppliedIteration = new Map<string, number>(); // nodeId -> last applied iteration
+			const loopPoll = setInterval(async () => {
+				if (finished) return;
+				try {
+					const activeRunId = await findActiveRunId(cwd);
+					if (!activeRunId) return;
+					const events = await queryLoopIterations(activeRunId);
+					for (const event of events) {
+						const key = `${event.nodeId}:${event.iteration}`;
+						const lastApplied = lastAppliedIteration.get(event.nodeId) ?? 0;
+						if (event.iteration <= lastApplied) continue;
+						box.dagTracker.applyEvent(event);
+						lastAppliedIteration.set(event.nodeId, event.iteration);
+					}
+				} catch (loopPollErr) {
+					// Best-effort — don't interrupt the workflow
+				}
+			}, 5000); // Poll every 5s (less frequent than status sync)
+
 			// Set initial status
 			ctx.ui.setStatus(STATUS_KEY_RUNNING, `◆ archon ${workflow} starting...`);
 
@@ -306,6 +331,7 @@ async function runWorkflowForCommand(
 				})
 				.finally(() => {
 					clearInterval(approvalPoll);
+					clearInterval(loopPoll);
 				});
 
 			return box;

@@ -378,6 +378,12 @@ function stepFromDagEvent(event: DagEvent): string | undefined {
 			return "workflow completed";
 		case "workflow_failed":
 			return "workflow failed";
+		case "loop_iteration_started":
+			return `${event.nodeId} iteration ${event.iteration}`;
+		case "loop_iteration_completed":
+			return `${event.nodeId} iteration ${event.iteration} completed`;
+		case "loop_iteration_failed":
+			return `${event.nodeId} iteration ${event.iteration} failed`;
 	}
 }
 
@@ -403,6 +409,12 @@ function textFromDagEvent(event: DagEvent): string {
 			return `✅ workflow completed${event.duration ? ` (${Math.round(event.duration / 1000)}s)` : ""}`;
 		case "workflow_failed":
 			return `❌ workflow failed${event.error ? `: ${event.error}` : ""}`;
+		case "loop_iteration_started":
+			return `🔄 ${event.nodeId} iteration ${event.iteration}/${event.maxIterations} started`;
+		case "loop_iteration_completed":
+			return `✓ ${event.nodeId} iteration ${event.iteration}${event.duration ? ` (${Math.round(event.duration / 1000)}s)` : ""}`;
+		case "loop_iteration_failed":
+			return `✗ ${event.nodeId} iteration ${event.iteration} failed: ${event.error}`;
 	}
 }
 
