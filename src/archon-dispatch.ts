@@ -79,7 +79,10 @@ export async function handleToolCommand(pi: ExtensionAPI, cmd: string, args: str
 
 export async function handleCliFallback(pi: ExtensionAPI, _ctx: ExtensionCommandContext, tokens: string[], _projectCwd: string) {
   const firstToken = tokens[0]?.toLowerCase() ?? "";
-  emitArchonMessage(pi, formatArchonMessage(`- **Unknown:** \`${safeCode(firstToken)}\``));
+  const hint = tokens.length > 1
+    ? ` Did you mean \`/archon ${tokens.join(" ")}\`?`
+    : ` Type \`/archon help\` for available commands.`;
+  emitArchonMessage(pi, formatArchonMessage(`- **Unknown command:** \`${safeCode(firstToken)}\`${hint}`));
 }
 
 
