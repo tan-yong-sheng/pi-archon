@@ -22,7 +22,7 @@ import { registerCliRoutes, registerArchonTools } from "./archon-routes";
 import { normalizeWorkflow } from "./archon-ui";
 import { runArchonCommandWithToolUpdates, formatArchonOutput, formatArchonToolResult } from "./archon-exec";
 import { rollupStaleRefs, auditAllSubmoduleRefs, fetchSubmodules, readSubmodulePaths, isOwnedRepo, parseLines } from "./git-util";
-import { buildCompletions } from "./command-tree";
+import { buildContextCompletions } from "./command-tree";
 import { refreshProjectWorkflowNames } from "./workflow-discovery";
 import { ArchonMessagePanel } from "./ui/message-panel";
 
@@ -40,11 +40,8 @@ export default async function onEnable(api: ExtensionAPI): Promise<void> {
     commandApi.registerCommand("archon", {
       description: "Archon workspace launcher — project workflows, cleanup, web dev",
       getArgumentCompletions: (prefix: string) => {
-        const completions = buildCompletions();
-        const filtered = prefix.length > 0
-          ? completions.filter((c) => c.value.toLowerCase().startsWith(prefix.toLowerCase()))
-          : completions;
-            return filtered.length > 0 ? filtered : null;
+        const completions = buildContextCompletions(prefix);
+        return completions.length > 0 ? completions : null;
       },
       handler: async (args: string, ctx: ExtensionCommandContext) => {
         try {
@@ -64,6 +61,6 @@ export { createMessageEmitter } from "./helpers";
 export { rollupStaleRefs, auditAllSubmoduleRefs, fetchSubmodules, readSubmodulePaths, isOwnedRepo, parseLines } from "./git-util";
 export { ArchonCommand } from "./commands/base";
 export { isGroup } from "./commands/defs";
-export { archonTree, getAllLeaves, getHandler, resolveTokens, generateFullHelp, generateScopedHelp, generateGroupHelp, isHelpTrigger, buildCompletions } from "./command-tree";
+export { archonTree, getAllLeaves, getHandler, resolveTokens, generateFullHelp, generateScopedHelp, generateGroupHelp, isHelpTrigger, buildCompletions, buildContextCompletions } from "./command-tree";
 export type { CompletionItem } from "./command-tree";
 export type { CommandNode, SubCommandMeta, CommandGroupMeta, PositionalArg, FlagDef } from "./commands/defs";
