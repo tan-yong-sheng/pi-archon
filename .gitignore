@@ -3,8 +3,15 @@ package-lock.json
 *.log
 npm-debug.log*
 .DS_Store
-.serena/.pi-lens/
-
+.serena/
+.pi-lens/
+# Video frame research artifacts
+cy2-*.jpg
+part2-*.jpg
+part3-*.jpg
+eddie3-*.jpg
+eddie-*.jpg
 # Archon runtime artifacts
 .archon/state/
 .archon/.env
+.archon/logs/

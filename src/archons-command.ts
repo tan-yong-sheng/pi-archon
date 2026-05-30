@@ -17,21 +17,32 @@ import type {
 	Component,
 	TUI,
 	Theme,
-	OverlayHandle,
 } from "@mariozechner/pi-tui";
-import {
-	SelectList,
-	type SelectItem,
-	truncateToWidth,
-	visibleWidth,
-} from "@mariozechner/pi-tui";
+import { SelectList, type SelectItem } from "@mariozechner/pi-tui";
 import {
 	getActiveRuns,
 	cancelRun,
 	type ActiveWorkflowRun,
 } from "./workflow-background";
-import { handleArchonStatusCommand } from "./handlers/manage-runtime";
+import { handleArchonStatusCommand } from "./workflow-ops";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
+
+// ── Completions for /archons ────────────────────────────────
+export function buildArchonsCompletions(
+  prefix: string,
+): { value: string; description?: string }[] {
+  const items = [
+    { value: "status", description: "Full workflow status from Archon CLI" },
+    { value: "cancel", description: "Cancel a running workflow by run ID" },
+  ];
+  // TODO: add workflow name completions for run dispatch (Task 1)
+  if (prefix.length > 0) {
+    return items.filter(
+      (i) => i.value.startsWith(prefix),
+    );
+  }
+  return items;
+}
 
 // ── Main handler ─────────────────────────────────────────────
 
