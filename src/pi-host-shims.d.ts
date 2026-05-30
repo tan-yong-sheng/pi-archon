@@ -125,6 +125,27 @@ declare module "@mariozechner/pi-tui" {
 	}
 	export function truncateToWidth(value: string, width: number): string;
 	export function visibleWidth(value: string): number;
+export type KeyId = string;
+export function matchesKey(data: string, keyId: KeyId): boolean;
+export const Key: {
+	escape: KeyId;
+	enter: KeyId;
+	tab: KeyId;
+	space: KeyId;
+	backspace: KeyId;
+	up: KeyId;
+	down: KeyId;
+	left: KeyId;
+	right: KeyId;
+	pageUp: KeyId;
+	pageDown: KeyId;
+	home: KeyId;
+	end: KeyId;
+	delete: KeyId;
+	ctrl<K extends string>(key: K): `ctrl+${K}`;
+	shift<K extends string>(key: K): `shift+${K}`;
+	alt<K extends string>(key: K): `alt+${K}`;
+};
 	export function wrapTextWithAnsi(text: string, width: number): string[];
 	export interface SelectItem {
 		value: string;

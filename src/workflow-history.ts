@@ -14,8 +14,7 @@ import {
 	DynamicBorder,
 	SelectList,
 	Text,
-	type SelectItem,
-} from "@mariozechner/pi-tui";
+	type SelectItem, matchesKey, Key } from "@mariozechner/pi-tui";
 import {
 	queryRecentRuns,
 	queryRunArtifacts,
@@ -214,7 +213,7 @@ export async function handleWorkflowHistoryCommand(
 			render: (w: number) => container.render(w),
 			invalidate: () => container.invalidate(),
 			handleInput: (data: string) => {
-				if (data === "\x1b") {
+				if (matchesKey(data, Key.escape)) {
 					// Escape
 					done(false);
 				}

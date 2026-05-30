@@ -12,7 +12,7 @@
  */
 
 import type { Component, Theme } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth, matchesKey, Key } from "@mariozechner/pi-tui";
 import type { DagProgressTracker } from "../dag-tracker";
 import type { DagNodeState } from "../types";
 
@@ -210,7 +210,7 @@ export class WorkflowOverlay implements Component {
 
 	handleInput(data: string): boolean {
 		// ESC = cancel
-		if (data === "\x1b" || data === "\x03") {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
 			this.onCancel?.();
 			return true;
 		}

@@ -10,7 +10,7 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import type { Component, Theme } from "@mariozechner/pi-tui";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth, matchesKey, Key } from "@mariozechner/pi-tui";
 
 // ── Public API ───────────────────────────────────────────────
 
@@ -76,17 +76,6 @@ export interface ArchonOverlayOptions {
 }
 
 // ── Key matching helpers ─────────────────────────────────────
-
-const ESC = "\x1b";
-const ENTER = "\r";
-const UP = "\x1b[A";
-const DOWN = "\x1b[B";
-const PAGE_UP = "\x1b[5~";
-const PAGE_DOWN = "\x1b[6~";
-
-function isKey(data: string, seq: string): boolean {
-	return data === seq;
-}
 
 // ── Overlay panel component ──────────────────────────────────
 
@@ -217,7 +206,7 @@ class ArchonOverlayPanel implements Component {
 		lines.push(scrollLine);
 
 		// Footer
-		const footer = th.fg("dim", " Esc/Enter close · ↑/↓ scroll ");
+		const footer = th.fg("dim", " Esc close · ↑/↓ scroll ");
 		const footerVisW = visibleWidth(footer);
 		lines.push(
 			th.fg("border", "╰") +
@@ -242,20 +231,20 @@ class ArchonOverlayPanel implements Component {
 	}
 
 	handleInput(data: string): boolean {
-		// Esc or Enter — dismiss
-		if (isKey(data, ESC) || isKey(data, ENTER)) {
+		// Esc — dismiss
+		if (matchesKey(data, Key.escape)) {
 			this.done();
 			return true;
 		}
 
 		// Scroll up
-		if (isKey(data, UP)) {
+		if (matchesKey(data, Key.up)) {
 			this.scrollOffset = Math.max(0, this.scrollOffset - 1);
 			return true;
 		}
 
 		// Scroll down
-		if (isKey(data, DOWN)) {
+		if (matchesKey(data, Key.down)) {
 			if (this.scrollOffset + this.viewHeight < this.totalLines) {
 				this.scrollOffset++;
 			}
@@ -263,13 +252,13 @@ class ArchonOverlayPanel implements Component {
 		}
 
 		// Page Up
-		if (isKey(data, PAGE_UP)) {
+		if (matchesKey(data, "pageUp")) {
 			this.scrollOffset = Math.max(0, this.scrollOffset - this.viewHeight);
 			return true;
 		}
 
 		// Page Down
-		if (isKey(data, PAGE_DOWN)) {
+		if (matchesKey(data, "pageDown")) {
 			this.scrollOffset = Math.min(
 				Math.max(0, this.totalLines - this.viewHeight),
 				this.scrollOffset + this.viewHeight,
