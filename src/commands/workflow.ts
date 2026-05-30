@@ -3,10 +3,10 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import {
-	emitArchonMessage,
 	formatArchonMessage,
 	maybeString,
 } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { findProjectWorkflow } from "../workflow-discovery";
 import { ArchonCommand } from "./base";
 import { defineCommandEntries } from "./defs";
@@ -40,8 +40,8 @@ export class RunWorkflowCommand extends ArchonCommand {
 	): Promise<void> {
 		const workflow = maybeString(args[0]);
 		if (!workflow) {
-			emitArchonMessage(
-				pi,
+			await showArchonOverlay(
+				pi, ctx,
 				formatArchonMessage(
 					"- **Missing workflow name**",
 					"",
@@ -57,8 +57,8 @@ export class RunWorkflowCommand extends ArchonCommand {
 			ctx.cwd || process.cwd(),
 		);
 		if (!resolved) {
-			emitArchonMessage(
-				pi,
+			await showArchonOverlay(
+				pi, ctx,
 				formatArchonMessage(`- **Unknown workflow:** \`${workflow}\``),
 			);
 			return;

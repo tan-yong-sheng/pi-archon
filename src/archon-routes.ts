@@ -15,7 +15,8 @@ interface RouteCapableExtensionAPI extends ExtensionAPI {
     handler: (req: ArchonRouteRequest) => Promise<unknown>;
   }): void;
 }
-import { emitArchonMessage, formatArchonMessage, formatToolTextResult, splitArgs } from "./helpers";
+import { formatArchonMessage, formatToolTextResult, splitArgs } from "./helpers";
+import { showArchonOverlay } from "./ui/archon-overlay";
 import { resolveTokens, generateHelpForPath, isHelpTrigger } from "./command-tree";
 import { archonRouteSchema, archonToolBlocked, blockedToolResult, handleCliFallback, handleToolCommand } from "./archon-dispatch";
 
@@ -49,7 +50,7 @@ export async function registerCliRoutes(pi: ExtensionAPI, ctx: ExtensionCommandC
 
   // ── Help at top level (no subcommand given or bare help token) ──
   if (!tokens.length || isHelpTrigger(tokens) && tokens.length <= 1) {
-    emitArchonMessage(pi, generateHelpForPath([]));
+    await showArchonOverlay(pi, ctx, generateHelpForPath([]), { title: "Archon" });
     return;
   }
 
@@ -58,14 +59,14 @@ export async function registerCliRoutes(pi: ExtensionAPI, ctx: ExtensionCommandC
 
   // Check if a help-trigger appears anywhere in remaining args
   if (isHelpTrigger(result.rest)) {
-    emitArchonMessage(pi, generateHelpForPath(tokens.slice(0, tokens.length - result.rest.length)));
+    await showArchonOverlay(pi, ctx, generateHelpForPath(tokens.slice(0, tokens.length - result.rest.length)), { title: "Archon" });
     return;
   }
 
   // Tokens exhausted on matched group/meta — render scoped help
   // instead of falling through to legacy dispatch.
   if (!result.handler && result.meta) {
-    emitArchonMessage(pi, generateHelpForPath(tokens));
+    await showArchonOverlay(pi, ctx, generateHelpForPath(tokens), { title: "Archon" });
     return;
   }
 

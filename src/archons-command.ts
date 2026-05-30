@@ -9,10 +9,27 @@
  * Also accepts params like: /archons cancel <runId>
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import type { Component, TUI, Theme, OverlayHandle } from "@mariozechner/pi-tui";
-import { SelectList, type SelectItem, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { getActiveRuns, cancelRun, type ActiveWorkflowRun } from "./workflow-background";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+} from "@mariozechner/pi-coding-agent";
+import type {
+	Component,
+	TUI,
+	Theme,
+	OverlayHandle,
+} from "@mariozechner/pi-tui";
+import {
+	SelectList,
+	type SelectItem,
+	truncateToWidth,
+	visibleWidth,
+} from "@mariozechner/pi-tui";
+import {
+	getActiveRuns,
+	cancelRun,
+	type ActiveWorkflowRun,
+} from "./workflow-background";
 import { handleArchonStatusCommand } from "./handlers/manage-runtime";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
 
@@ -56,18 +73,26 @@ export async function handleArchonsCommand(
 
 	if (!ctx.hasUI) {
 		// No UI — just print text
-		pi.sendMessage?.({
-			customType: "archon",
-			content: formatRunsAsText(runs),
-			display: true,
-			details: { action: "list_active_runs", count: runs.size },
-		}, { deliverAs: "nextTurn" });
+		pi.sendMessage?.(
+			{
+				customType: "archon",
+				content: formatRunsAsText(runs),
+				display: true,
+				details: { action: "list_active_runs", count: runs.size },
+			},
+			{ deliverAs: "nextTurn" },
+		);
 		return;
 	}
 
 	// Show interactive overlay
 	await ctx.ui.custom<string | null>(
-		(tui: TUI, theme: Theme, _kb: unknown, done: (value: string | null) => void) => {
+		(
+			tui: TUI,
+			theme: Theme,
+			_kb: unknown,
+			done: (value: string | null) => void,
+		) => {
 			return new ArchonsOverlay(tui, theme, runs, done);
 		},
 		{
@@ -121,15 +146,11 @@ class ArchonsOverlay implements Component {
 			} else if (item.value === "__back__") {
 				this.showDetail = false;
 				this.detailRunId = null;
-				this.list = new SelectList(
-					this.buildItems(),
-					10,
-					{
-						selectedPrefix: (t: string) => theme.fg("accent", "▸ " + t),
-						selectedText: (t: string) => theme.fg("accent", t),
-						description: (t: string) => theme.fg("dim", t),
-					},
-				);
+				this.list = new SelectList(this.buildItems(), 10, {
+					selectedPrefix: (t: string) => theme.fg("accent", "▸ " + t),
+					selectedText: (t: string) => theme.fg("accent", t),
+					description: (t: string) => theme.fg("dim", t),
+				});
 				this.list.onSelect = this.list.onSelect;
 				this.list.onCancel = this.list.onCancel;
 				this.tui.requestRender();
@@ -137,15 +158,11 @@ class ArchonsOverlay implements Component {
 				// Show detail for this run
 				this.detailRunId = item.value;
 				this.showDetail = true;
-				this.list = new SelectList(
-					this.buildDetailItems(item.value),
-					10,
-					{
-						selectedPrefix: (t: string) => theme.fg("accent", "▸ " + t),
-						selectedText: (t: string) => theme.fg("accent", t),
-						description: (t: string) => theme.fg("dim", t),
-					},
-				);
+				this.list = new SelectList(this.buildDetailItems(item.value), 10, {
+					selectedPrefix: (t: string) => theme.fg("accent", "▸ " + t),
+					selectedText: (t: string) => theme.fg("accent", t),
+					description: (t: string) => theme.fg("dim", t),
+				});
 				this.list.onSelect = this.list.onSelect;
 				this.list.onCancel = this.list.onCancel;
 				this.tui.requestRender();
@@ -219,16 +236,18 @@ class ArchonsOverlay implements Component {
 			};
 			const icon = stateIcons[node.state] ?? "○";
 			const color = stateColors[node.state] ?? "dim";
-			const elapsed = node.state === "running" && node.startedAt
-				? ` ${fmtElapsed(Math.floor((Date.now() - node.startedAt) / 1000))}`
-				: node.duration
-					? ` ${node.duration}`
-					: "";
+			const elapsed =
+				node.state === "running" && node.startedAt
+					? ` ${fmtElapsed(Math.floor((Date.now() - node.startedAt) / 1000))}`
+					: node.duration
+						? ` ${node.duration}`
+						: "";
 
 			items.push({
 				value: `node-${node.id}`,
 				label: `${th.fg(color, icon)} ${node.id}${th.fg("dim", elapsed)}`,
-				description: node.error ?? node.skipReason ?? node.approvalMessage ?? node.state,
+				description:
+					node.error ?? node.skipReason ?? node.approvalMessage ?? node.state,
 			});
 		}
 
@@ -254,19 +273,17 @@ class ArchonsOverlay implements Component {
 		const bl = "│";
 		const innerWidth = w - 2;
 
-		const header = this.showDetail && this.detailRunId
-			? `◆ archon runs — ${this.runs.get(this.detailRunId)?.workflowName ?? this.detailRunId}`
-			: "◆ archon runs";
+		const header =
+			this.showDetail && this.detailRunId
+				? `◆ archon runs — ${this.runs.get(this.detailRunId)?.workflowName ?? this.detailRunId}`
+				: "◆ archon runs";
 
 		const lines: string[] = [];
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
 		lines.push(
 			border(bl) + padLine(` ${th.bold(header)}`, innerWidth) + border(bl),
 		);
-		lines.push(
-			border(bl) +
-				border("├" + "─".repeat(innerWidth - 1) + "┤"),
-		);
+		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
 		// SelectList content
 		const listLines = this.list.render(innerWidth);
@@ -290,7 +307,9 @@ class ArchonsOverlay implements Component {
 
 // ── Text fallback (no UI) ────────────────────────────────────
 
-function formatRunsAsText(runs: ReadonlyMap<string, ActiveWorkflowRun>): string {
+function formatRunsAsText(
+	runs: ReadonlyMap<string, ActiveWorkflowRun>,
+): string {
 	const lines = ["## Active Archon Workflows", ""];
 
 	if (runs.size === 0) {

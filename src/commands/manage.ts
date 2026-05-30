@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { emitArchonMessage, formatArchonMessage, maybeString } from "../helpers";
+import { formatArchonMessage, maybeString } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { ArchonCommand, HelpableArchonCommand, HelpFilteringArchonCommand } from "./base";
 import { defineCommandEntries } from "./defs";
 import type { CommandGroupMeta, SubCommandMeta } from "./defs";
@@ -24,7 +25,7 @@ export class CancelWorkflowCommand extends ArchonCommand {
   async execute(pi: ExtensionAPI, args: string[], ctx: ExtensionCommandContext): Promise<void> {
     const runId = maybeString(args.join(" ").trim());
     if (!runId) {
-      emitArchonMessage(pi, formatArchonMessage("- **Missing run id**", "", "```bash", "/archon manage cancel <runId>", "```"));
+      await showArchonOverlay(pi, ctx, formatArchonMessage("- **Missing run id**", "", "```bash", "/archon manage cancel <runId>", "```"), { title: "Cancel Workflow" });
       return;
     }
     await this.handler.run(pi, ctx, [runId]);

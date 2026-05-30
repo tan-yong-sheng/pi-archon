@@ -1,11 +1,12 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { emitArchonMessage, formatElapsed, normalizeError } from "../helpers";
+import { formatElapsed, normalizeError } from "../helpers";
+import { showArchonOverlay } from "./archon-overlay";
 import { safeCode } from "../output-filter";
 import { ProgressBox } from "./progress-box";
 import type { LineParserFn, PhaseRunnerConfig, PipelineConfig, PipelineStep, StepResult, StreamMessage } from "../types";
 
-function defaultEmit(pi: ExtensionAPI): (text: string) => void {
-  return (text: string) => emitArchonMessage(pi, text);
+function defaultEmit(pi: ExtensionAPI, ctx: ExtensionCommandContext): (text: string) => Promise<void> {
+  return (text: string) => showArchonOverlay(pi, ctx, text);
 }
 
 function defaultPill(title: string): string {
@@ -65,7 +66,7 @@ export async function runPipeline<TData = unknown>(
 ): Promise<{ results: StepResult[]; data?: TData }> {
   const title = cfg.title;
   const maxLines = cfg.maxLines ?? 8;
-  const emitLine = cfg.emitLine ?? defaultEmit(pi);
+  const emitLine = cfg.emitLine ?? defaultEmit(pi, ctx);
   const successLabel = cfg.successLabel ?? `${title} complete.`;
   const errorLabel = cfg.errorLabel ?? `${title} finished with errors.`;
   const stepDefs: PipelineStep[] = Array.isArray(cfg.steps)
@@ -172,7 +173,7 @@ export async function runPhase<TData = unknown>(
 ): Promise<{ messages: StreamMessage[]; data?: TData }> {
   const title = cfg.title;
   const maxLines = cfg.maxLines ?? 6;
-  const emitLine = cfg.emitLine ?? defaultEmit(pi);
+  const emitLine = cfg.emitLine ?? defaultEmit(pi, ctx);
   const successLabel = cfg.successLabel ?? `${title} complete.`;
   const errorLabel = cfg.errorLabel ?? `${title} finished with errors.`;
   const lineParser: LineParserFn = cfg.lineParser ?? ((line, isErr) => ({ text: line, isErr }));

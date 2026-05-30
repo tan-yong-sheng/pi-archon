@@ -8,7 +8,8 @@ import {
 } from "../constants";
 import { getArchonServerUrl, getArchonWebUrl, resolveArchonEndpointConfig, resolveArchonHome, resolveProjectArchonAssistant } from "../config";
 import type { ArchonWebCleanupResult, ArchonWebStartOptions, ArchonWebStartResult, WebHealthStatus } from "../types";
-import { emitArchonMessage, shellQuote } from "../helpers";
+import { shellQuote } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { isPidRunning, readLogTail, readPidFile } from "../runtime-util";
 import {
   captureRuntimeCleanup,
@@ -132,7 +133,7 @@ export async function handleArchonWebCommand(pi: ExtensionAPI, webTokens: string
   const command = webTokens[0];
 
   if (!command || ["help", "-h", "--help"].includes(command)) {
-    emitRuntimeHelp(pi, "web");
+    await emitRuntimeHelp(pi, ctx, "web");
     return;
   }
 
@@ -180,11 +181,11 @@ export async function handleArchonWebCommand(pi: ExtensionAPI, webTokens: string
       RUNTIME_STATUS_LOG_LINES,
       RUNTIME_HEALTH_TIMEOUT_MS
     );
-    emitArchonMessage(pi, renderWebStatus(archonHome, projectCwd, status, status.port), { pill: ARCHON_PILL_WEB });
+    await showArchonOverlay(pi, ctx, renderWebStatus(archonHome, projectCwd, status, status.port), { title: "Web Status", details: { pill: ARCHON_PILL_WEB } });
     ctx.ui.notify(status.isHealthy ? "Web frontend healthy." : "Web frontend unhealthy or not running.", status.isHealthy ? "info" : "warning");
     return;
   }
 
   // Unknown sub-command
-  emitUnknownRuntimeSubcommand(pi, ARCHON_WEB_TITLE, "web", command);
+  await emitUnknownRuntimeSubcommand(pi, ctx, ARCHON_WEB_TITLE, "web", command);
 }

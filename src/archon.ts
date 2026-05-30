@@ -151,4 +151,5 @@ export {
 } from "./workflow-background";
 export { handleArchonsCommand } from "./archons-command";
 export { WorkflowOverlay, fmtElapsed, padLine } from "./ui/workflow-overlay";
+export { showArchonOverlay, type ArchonOverlayOptions } from "./ui/archon-overlay";
 export * as constants from "./constants";

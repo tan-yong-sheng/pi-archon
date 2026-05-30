@@ -7,7 +7,7 @@ import {
   RUNTIME_STATUS_LOG_LINES,
 } from "../constants";
 import { getArchonServerUrl, resolveArchonHome } from "../config";
-import { emitArchonMessage } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { isPidRunning, readLogTail, readPidFile } from "../runtime-util";
 import type { ArchonRuntimeStartResult, RuntimeHealthStatus } from "../types";
 import {
@@ -92,7 +92,7 @@ export async function handleArchonServerCommand(pi: ExtensionAPI, tokens: string
   const command = tokens[0];
 
   if (!command || ["help", "-h", "--help"].includes(command)) {
-    emitRuntimeHelp(pi, "server");
+    await emitRuntimeHelp(pi, ctx, "server");
     return;
   }
 
@@ -132,11 +132,11 @@ export async function handleArchonServerCommand(pi: ExtensionAPI, tokens: string
     const archonHome = resolveRuntimeHome(projectCwd, resolveArchonHome);
     const isHealthy = await isRuntimeServerHealthy(getArchonServerUrl, projectCwd, RUNTIME_HEALTH_TIMEOUT_MS);
     const logTail = readLogTail(getArchonRuntimePaths(projectCwd, "server").logFile, RUNTIME_STATUS_LOG_LINES);
-    emitArchonMessage(pi, renderServerStatus(archonHome, projectCwd, { isHealthy, logTail }), { pill: ARCHON_PILL_SERVER });
+    await showArchonOverlay(pi, ctx, renderServerStatus(archonHome, projectCwd, { isHealthy, logTail }), { title: "Server Status", details: { pill: ARCHON_PILL_SERVER } });
     ctx.ui.notify(isHealthy ? "Server healthy." : "Server unhealthy or not running.", isHealthy ? "info" : "warning");
     return;
   }
 
   // Unknown sub-command
-  emitUnknownRuntimeSubcommand(pi, ARCHON_SERVER_TITLE, "server", command);
+  await emitUnknownRuntimeSubcommand(pi, ctx, ARCHON_SERVER_TITLE, "server", command);
 }

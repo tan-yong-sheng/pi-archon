@@ -13,19 +13,16 @@
  * The overlay stays alive independently via setInterval poll.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+} from "@mariozechner/pi-coding-agent";
 import type { TUI, Theme, OverlayHandle } from "@mariozechner/pi-tui";
 import { spawn, type ChildProcess } from "node:child_process";
 import { DagProgressTracker } from "./dag-tracker";
 import { WorkflowOverlay, fmtElapsed } from "./ui/workflow-overlay";
-import {
-	STATUS_KEY_RUNNING,
-	PROGRESS_UPDATE_MS,
-} from "./constants";
-import {
-		formatElapsed,
-			toPillLabel,
-} from "./helpers";
+import { STATUS_KEY_RUNNING, PROGRESS_UPDATE_MS } from "./constants";
+import { formatElapsed, toPillLabel } from "./helpers";
 import { redactSecrets, safeCode, tryParseDagEvent } from "./output-filter";
 import {
 	findLatestRunId,
@@ -39,7 +36,11 @@ import {
 	cancelArchonWorkflowRun,
 } from "./handlers/manage-runtime";
 import { runArchonCommand, formatArchonOutput } from "./archon-exec";
-import type { ArchonRunResult, CommandWorkflowOutcome, WorkflowName } from "./types";
+import type {
+	ArchonRunResult,
+	CommandWorkflowOutcome,
+	WorkflowName,
+} from "./types";
 
 // ── Active run tracking (shared with /archons command) ───────
 
@@ -112,8 +113,7 @@ export function runWorkflowBackground(
 	const runId = nextRunId();
 	const cwd = ctx.cwd || process.cwd();
 	const tracker = new DagProgressTracker();
-	const queryPreview =
-		query.length > 72 ? `${query.slice(0, 72)}…` : query;
+	const queryPreview = query.length > 72 ? `${query.slice(0, 72)}…` : query;
 
 	const entry: ActiveWorkflowRun = {
 		workflowName: workflow,
@@ -126,282 +126,297 @@ export function runWorkflowBackground(
 	// The controller component immediately creates the overlay and calls done(),
 	// making it non-blocking. The overlay persists via tui.showOverlay's
 	// nonCapturing mode and stays alive through setInterval-driven updates.
-	ctx.ui.custom<string>(
-		(tui: TUI, theme: Theme, _kb: unknown, done: (value: string) => void) => {
-			entry.tui = tui;
+	ctx.ui
+		.custom<string>(
+			(tui: TUI, theme: Theme, _kb: unknown, done: (value: string) => void) => {
+				entry.tui = tui;
 
-			// Create the overlay component
-			const overlay = new WorkflowOverlay(
-				{
-					workflowName: workflow,
-					queryPreview,
-					dagTracker: tracker,
-					onCancel: () => {
-						void cancelRun(runId);
+				// Create the overlay component
+				const overlay = new WorkflowOverlay(
+					{
+						workflowName: workflow,
+						queryPreview,
+						dagTracker: tracker,
+						onCancel: () => {
+							void cancelRun(runId);
+						},
 					},
-				},
-				theme,
-			);
+					theme,
+				);
 
-			// Show as non-capturing overlay in the top-right corner
-			const handle = tui.showOverlay(overlay, {
-				nonCapturing: true,
-				anchor: "top-right",
-				width: 44,
-				margin: { top: 1, right: 2 },
-			});
+				// Show as non-capturing overlay in the top-right corner
+				const handle = tui.showOverlay(overlay, {
+					nonCapturing: true,
+					anchor: "top-right",
+					width: 44,
+					margin: { top: 1, right: 2 },
+				});
 
-			entry.overlayHandle = handle;
+				entry.overlayHandle = handle;
 
-			// ── Spawn the archon CLI subprocess ──────────────
-			const { cmd, args: baseArgs } = resolveArchonBin(cwd);
-			const cliArgs = [
-				...baseArgs,
-				"workflow",
-				"run",
-				workflow,
-				query.trim(),
-				"--no-worktree",
-			];
+				// ── Spawn the archon CLI subprocess ──────────────
+				const { cmd, args: baseArgs } = resolveArchonBin(cwd);
+				const cliArgs = [
+					...baseArgs,
+					"workflow",
+					"run",
+					workflow,
+					query.trim(),
+					"--no-worktree",
+				];
 
-			const proc = spawn(cmd, cliArgs, {
-				cwd,
-				env: { ...process.env },
-				stdio: ["ignore", "pipe", "pipe"],
-			});
+				const proc = spawn(cmd, cliArgs, {
+					cwd,
+					env: { ...process.env },
+					stdio: ["ignore", "pipe", "pipe"],
+				});
 
-			entry.process = proc;
+				entry.process = proc;
 
-			// ── Stream stderr into the tracker ───────────────
-			proc.stderr?.on("data", (chunk: Buffer) => {
-				const lines = chunk.toString("utf-8").split(/\n/);
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					const event = tryParseDagEvent(line);
-					if (event) {
-						tracker.applyEvent(event);
+				// ── Stream stderr into the tracker ───────────────
+				proc.stderr?.on("data", (chunk: Buffer) => {
+					const lines = chunk.toString("utf-8").split(/\n/);
+					for (const line of lines) {
+						if (!line.trim()) continue;
+						const event = tryParseDagEvent(line);
+						if (event) {
+							tracker.applyEvent(event);
+						}
 					}
-				}
-			});
+				});
 
-			// Also capture stdout for the final result
-			let stdoutBuf = "";
-			proc.stdout?.on("data", (chunk: Buffer) => {
-				stdoutBuf += chunk.toString("utf-8");
-			});
+				// Also capture stdout for the final result
+				let stdoutBuf = "";
+				proc.stdout?.on("data", (chunk: Buffer) => {
+					stdoutBuf += chunk.toString("utf-8");
+				});
 
-			let stderrBuf = "";
-			proc.stderr?.on("data", (chunk: Buffer) => {
-				stderrBuf += chunk.toString("utf-8");
-			});
+				let stderrBuf = "";
+				proc.stderr?.on("data", (chunk: Buffer) => {
+					stderrBuf += chunk.toString("utf-8");
+				});
 
-			// ── Poll: request overlay re-render at regular interval ──
-			const pollTimer = setInterval(() => {
-				if (tracker.workflowDone) return;
-				tui.requestRender();
-			}, PROGRESS_UPDATE_MS);
-			entry.pollTimer = pollTimer;
+				// ── Poll: request overlay re-render at regular interval ──
+				const pollTimer = setInterval(() => {
+					if (tracker.workflowDone) return;
+					tui.requestRender();
+				}, PROGRESS_UPDATE_MS);
+				entry.pollTimer = pollTimer;
 
-			// ── Status bar sync ──────────────────────────────
-			const statusTimer = setInterval(() => {
-				if (tracker.workflowDone) return;
-				const elapsed = formatElapsed(
-					Math.floor((Date.now() - entry.startedAt) / 1000),
-				);
-				const progress = tracker.progressSummary(
-					Math.floor((Date.now() - entry.startedAt) / 1000),
-				);
-				ctx.ui.setStatus?.(
-					STATUS_KEY_RUNNING,
-					`◆ archon ${workflow} ${progress}`,
-				);
-			}, PROGRESS_UPDATE_MS);
-			entry.statusTimer = statusTimer;
+				// ── Status bar sync ──────────────────────────────
+				const statusTimer = setInterval(() => {
+					if (tracker.workflowDone) return;
+					const elapsed = formatElapsed(
+						Math.floor((Date.now() - entry.startedAt) / 1000),
+					);
+					const progress = tracker.progressSummary(
+						Math.floor((Date.now() - entry.startedAt) / 1000),
+					);
+					ctx.ui.setStatus?.(
+						STATUS_KEY_RUNNING,
+						`◆ archon ${workflow} ${progress}`,
+					);
+				}, PROGRESS_UPDATE_MS);
+				entry.statusTimer = statusTimer;
 
-			// ── Loop iteration DB poll ────────────────────────
-			const lastAppliedIteration = new Map<string, number>();
-			const loopPollTimer = setInterval(async () => {
-				if (tracker.workflowDone) return;
-				try {
-					const activeRunId = await findActiveRunId(cwd);
-					if (!activeRunId) return;
-					const events = await queryLoopIterations(activeRunId);
-					for (const event of events) {
-						const lastApplied =
-							lastAppliedIteration.get(event.nodeId ?? "") ?? 0;
-						if ((event.iteration ?? 0) <= lastApplied) continue;
-						tracker.applyEvent(event);
-						lastAppliedIteration.set(
-							event.nodeId ?? "",
-							event.iteration ?? 0,
-						);
+				// ── Loop iteration DB poll ────────────────────────
+				const lastAppliedIteration = new Map<string, number>();
+				const loopPollTimer = setInterval(async () => {
+					if (tracker.workflowDone) return;
+					try {
+						const activeRunId = await findActiveRunId(cwd);
+						if (!activeRunId) return;
+						const events = await queryLoopIterations(activeRunId);
+						for (const event of events) {
+							const lastApplied =
+								lastAppliedIteration.get(event.nodeId ?? "") ?? 0;
+							if ((event.iteration ?? 0) <= lastApplied) continue;
+							tracker.applyEvent(event);
+							lastAppliedIteration.set(
+								event.nodeId ?? "",
+								event.iteration ?? 0,
+							);
+						}
+					} catch {
+						// Best-effort
 					}
-				} catch {
-					// Best-effort
-				}
-			}, 5000);
-			entry.loopPollTimer = loopPollTimer;
+				}, 5000);
+				entry.loopPollTimer = loopPollTimer;
 
-			// ── Handle process exit ───────────────────────────
-			proc.on("close", (exitCode) => {
-				const durationMs = Date.now() - entry.startedAt;
+				// ── Handle process exit ───────────────────────────
+				proc.on("close", (exitCode) => {
+					const durationMs = Date.now() - entry.startedAt;
 
-				// Apply final workflow event
-				if (exitCode === 0) {
-					tracker.applyEvent({ type: "workflow_completed" });
-				} else {
-					tracker.applyEvent({
-						type: "workflow_failed",
-						error: `exit code ${exitCode}`,
-					});
-				}
-
-				// Final render to show completion state
-				tui.requestRender();
-
-				// Clean up timers
-				clearInterval(pollTimer);
-				clearInterval(statusTimer);
-				clearInterval(loopPollTimer);
-
-				// Dismiss overlay after a brief delay so the user sees "✓ complete"
-				setTimeout(() => {
-					handle.hide();
-					ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
-				}, 1200);
-
-				// Post result as a chat message
-				const runResult: ArchonRunResult = {
-					exitCode: exitCode ?? 1,
-					stdout: stdoutBuf,
-					stderr: stderrBuf,
-					command: `${cmd} ${cliArgs.join(" ")}`,
-				};
-
-				const outcome: CommandWorkflowOutcome = {
-					run: runResult,
-					durationMs,
-				};
-
-				// Build the result message
-				const cleaned = formatArchonOutput(
-					`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
-					runResult,
-					durationMs,
-				)
-					.split("\n")
-					.filter((l: string) => !/^\[(?:INF|WRN)\] /m.test(l))
-					.join("\n");
-
-				// Query artifacts (best-effort)
-				const artifactsSection = "";
-				try {
-					const latestRunId = findLatestRunId(workflow, cwd);
-					if (latestRunId) {
-						findLatestRunId(workflow, cwd).then((rid) => {
-							if (!rid) return;
-							queryRunArtifacts(rid).then((artifacts) => {
-								if (artifacts.length > 0) {
-									const section = renderArtifactsSection(artifacts);
-									// Post follow-up message with artifacts
-									pi.sendMessage?.({
-										customType: "archon",
-										content: `## Archon ${workflow.toUpperCase()} Artifacts\n${section}`,
-										display: true,
-										details: {
-											workflow,
-											artifacts,
-											pill: toPillLabel(workflow),
-										},
-									}, { deliverAs: "nextTurn" });
-								}
-							});
+					// Apply final workflow event
+					if (exitCode === 0) {
+						tracker.applyEvent({ type: "workflow_completed" });
+					} else {
+						tracker.applyEvent({
+							type: "workflow_failed",
+							error: `exit code ${exitCode}`,
 						});
 					}
-				} catch {
-					// Best-effort
-				}
 
-				// Post the main result message
-				pi.sendMessage?.({
-					customType: "archon",
-					content: cleaned,
-					display: true,
-					details: {
-						workflow,
-						query,
-						exitCode: runResult.exitCode,
+					// Final render to show completion state
+					tui.requestRender();
+
+					// Clean up timers
+					clearInterval(pollTimer);
+					clearInterval(statusTimer);
+					clearInterval(loopPollTimer);
+
+					// Dismiss overlay after a brief delay so the user sees "✓ complete"
+					setTimeout(() => {
+						handle.hide();
+						ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+					}, 1200);
+
+					// Post result as a chat message
+					const runResult: ArchonRunResult = {
+						exitCode: exitCode ?? 1,
+						stdout: stdoutBuf,
+						stderr: stderrBuf,
+						command: `${cmd} ${cliArgs.join(" ")}`,
+					};
+
+					const outcome: CommandWorkflowOutcome = {
+						run: runResult,
 						durationMs,
-						pill: toPillLabel(workflow),
-					},
-				}, { deliverAs: "nextTurn" });
+					};
 
-				// Toast notification
-				ctx.ui.notify?.(
-					exitCode === 0
-						? `Archon ${workflow} finished (${fmtElapsed(Math.floor(durationMs / 1000))}).`
-						: `Archon ${workflow} failed (exit ${exitCode}).`,
-					exitCode === 0 ? "info" : "warning",
-				);
+					// Build the result message
+					const cleaned = formatArchonOutput(
+						`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+						runResult,
+						durationMs,
+					)
+						.split("\n")
+						.filter((l: string) => !/^\[(?:INF|WRN)\] /m.test(l))
+						.join("\n");
 
-				// Remove from active runs
-				activeRuns.delete(runId);
+					// Query artifacts (best-effort)
+					const artifactsSection = "";
+					try {
+						const latestRunId = findLatestRunId(workflow, cwd);
+						if (latestRunId) {
+							findLatestRunId(workflow, cwd).then((rid) => {
+								if (!rid) return;
+								queryRunArtifacts(rid).then((artifacts) => {
+									if (artifacts.length > 0) {
+										const section = renderArtifactsSection(artifacts);
+										// Post follow-up message with artifacts
+										pi.sendMessage?.(
+											{
+												customType: "archon",
+												content: `## Archon ${workflow.toUpperCase()} Artifacts\n${section}`,
+												display: true,
+												details: {
+													workflow,
+													artifacts,
+													pill: toPillLabel(workflow),
+												},
+											},
+											{ deliverAs: "nextTurn" },
+										);
+									}
+								});
+							});
+						}
+					} catch {
+						// Best-effort
+					}
 
-				// Notify completion callback (used by /archons)
-				entry.onComplete?.(outcome);
-			});
+					// Post the main result message
+					pi.sendMessage?.(
+						{
+							customType: "archon",
+							content: cleaned,
+							display: true,
+							details: {
+								workflow,
+								query,
+								exitCode: runResult.exitCode,
+								durationMs,
+								pill: toPillLabel(workflow),
+							},
+						},
+						{ deliverAs: "nextTurn" },
+					);
 
-			proc.on("error", (err) => {
-				const durationMs = Date.now() - entry.startedAt;
-				tracker.applyEvent({
-					type: "workflow_failed",
-					error: err.message,
+					// Toast notification
+					ctx.ui.notify?.(
+						exitCode === 0
+							? `Archon ${workflow} finished (${fmtElapsed(Math.floor(durationMs / 1000))}).`
+							: `Archon ${workflow} failed (exit ${exitCode}).`,
+						exitCode === 0 ? "info" : "warning",
+					);
+
+					// Remove from active runs
+					activeRuns.delete(runId);
+
+					// Notify completion callback (used by /archons)
+					entry.onComplete?.(outcome);
 				});
-				tui.requestRender();
 
-				clearInterval(pollTimer);
-				clearInterval(statusTimer);
-				clearInterval(loopPollTimer);
-
-				setTimeout(() => {
-					handle.hide();
-					ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
-				}, 1200);
-
-				pi.sendMessage?.({
-					customType: "archon",
-					content: `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`,
-					display: true,
-					details: {
-						workflow,
-						query,
+				proc.on("error", (err) => {
+					const durationMs = Date.now() - entry.startedAt;
+					tracker.applyEvent({
+						type: "workflow_failed",
 						error: err.message,
-						durationMs,
-						pill: toPillLabel(workflow),
-					},
-				}, { deliverAs: "nextTurn" });
+					});
+					tui.requestRender();
 
-				ctx.ui.notify?.(
-					`Archon ${workflow} failed: ${err.message}`,
-					"error",
-				);
+					clearInterval(pollTimer);
+					clearInterval(statusTimer);
+					clearInterval(loopPollTimer);
 
-				activeRuns.delete(runId);
-			});
+					setTimeout(() => {
+						handle.hide();
+						ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+					}, 1200);
 
-			// Register in active runs map
-			activeRuns.set(runId, entry);
+					pi.sendMessage?.(
+						{
+							customType: "archon",
+							content: `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`,
+							display: true,
+							details: {
+								workflow,
+								query,
+								error: err.message,
+								durationMs,
+								pill: toPillLabel(workflow),
+							},
+						},
+						{ deliverAs: "nextTurn" },
+					);
 
-			// Return immediately — the overlay and subprocess live on
-			done(runId);
-			return overlay;
-		},
-		{ overlay: true, overlayOptions: { anchor: "top-right", width: 44, margin: { top: 1, right: 2 } } },
-	).catch(() => {
-		// ctx.ui.custom() itself failed — unlikely but handle gracefully
-		activeRuns.delete(runId);
-		return null;
-	});
+					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
+
+					activeRuns.delete(runId);
+				});
+
+				// Register in active runs map
+				activeRuns.set(runId, entry);
+
+				// Return immediately — the overlay and subprocess live on
+				done(runId);
+				return overlay;
+			},
+			{
+				overlay: true,
+				overlayOptions: {
+					anchor: "top-right",
+					width: 44,
+					margin: { top: 1, right: 2 },
+				},
+			},
+		)
+		.catch(() => {
+			// ctx.ui.custom() itself failed — unlikely but handle gracefully
+			activeRuns.delete(runId);
+			return null;
+		});
 
 	return runId;
 }

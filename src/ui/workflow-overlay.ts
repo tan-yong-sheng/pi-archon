@@ -26,7 +26,10 @@ const NODE_ICONS: Record<DagNodeState, string> = {
 	approval: "⏸",
 };
 
-const NODE_COLORS: Record<DagNodeState, "accent" | "success" | "error" | "warning" | "muted" | "dim"> = {
+const NODE_COLORS: Record<
+	DagNodeState,
+	"accent" | "success" | "error" | "warning" | "muted" | "dim"
+> = {
 	queued: "dim",
 	running: "accent",
 	done: "success",
@@ -107,10 +110,7 @@ export class WorkflowOverlay implements Component {
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
 		lines.push(
 			border(bl) +
-				padLine(
-					`${titleText}  ${th.fg("dim", timeText)}`,
-					innerWidth,
-				) +
+				padLine(`${titleText}  ${th.fg("dim", timeText)}`, innerWidth) +
 				border(bl),
 		);
 
@@ -130,10 +130,7 @@ export class WorkflowOverlay implements Component {
 		}
 
 		// ── Separator ────────────────────────────────────────
-		lines.push(
-			border(bl) +
-				border("├" + "─".repeat(innerWidth - 1) + "┤"),
-		);
+		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
 		// ── Node list ────────────────────────────────────────
 		const nodes = tracker.nodes;
@@ -147,9 +144,7 @@ export class WorkflowOverlay implements Component {
 
 			let suffix = "";
 			if (node.state === "running" && node.startedAt) {
-				const nodeElapsed = Math.floor(
-					(Date.now() - node.startedAt) / 1000,
-				);
+				const nodeElapsed = Math.floor((Date.now() - node.startedAt) / 1000);
 				suffix = th.fg("dim", ` ${fmtElapsed(nodeElapsed)}`);
 			} else if (node.state === "done" && node.duration) {
 				suffix = th.fg("dim", ` ${node.duration}`);
@@ -159,10 +154,7 @@ export class WorkflowOverlay implements Component {
 			} else if (node.state === "skipped" && node.skipReason) {
 				suffix = th.fg("dim", ` ${node.skipReason}`);
 			} else if (node.state === "approval" && node.approvalMessage) {
-				const msg = truncateToWidth(
-					node.approvalMessage,
-					innerWidth - 14,
-				);
+				const msg = truncateToWidth(node.approvalMessage, innerWidth - 14);
 				suffix = th.fg("warning", ` ${msg}`);
 			}
 
@@ -184,19 +176,14 @@ export class WorkflowOverlay implements Component {
 			}
 
 			const line = `${th.fg(color, icon)} ${name}${iterBadge}${toolBadge}${suffix}`;
-			lines.push(
-				border(bl) + padLine(` ${line}`, innerWidth) + border(bl),
-			);
+			lines.push(border(bl) + padLine(` ${line}`, innerWidth) + border(bl));
 		}
 
 		if (nodes.length > maxVisible) {
 			const remaining = nodes.length - maxVisible;
 			lines.push(
 				border(bl) +
-					padLine(
-						th.fg("dim", ` … +${remaining} more`),
-						innerWidth,
-					) +
+					padLine(th.fg("dim", ` … +${remaining} more`), innerWidth) +
 					border(bl),
 			);
 		}
@@ -216,9 +203,7 @@ export class WorkflowOverlay implements Component {
 				: th.fg("success", " complete ")
 			: th.fg("dim", " Esc=cancel · e=expand ");
 
-		lines.push(
-			border("╰") + padLine(footerHint, innerWidth) + border("╯"),
-		);
+		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
 		return lines;
 	}

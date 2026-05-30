@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import { ARCHON_PILL_MANAGE, ARCHON_ROOT, ARCHON_STATUS_TITLE } from "../constants";
-import { emitArchonMessage, formatElapsed } from "../helpers";
+import { formatElapsed } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { safeCode } from "../output-filter";
 import { runArchonCommand } from "../archon-exec";
 
@@ -118,13 +119,13 @@ export async function handleArchonStatusCommand(pi: ExtensionAPI, ctx: Extension
     const run = await runArchonCommand(pi, ["workflow", "status", "--json"], projectRoot);
     if (run.exitCode !== 0) throw new Error(run.stderr || run.stdout || `exit ${run.exitCode}`);
     const parsed = parseWorkflowStatusJson(run.stdout || "", run.stderr || "");
-    emitArchonMessage(pi, renderWorkflowStatus(projectRoot, parsed.runs ?? []), { action: "workflow_status", runs: parsed.runs?.length ?? 0, pill: ARCHON_PILL_MANAGE });
+    await showArchonOverlay(pi, ctx, renderWorkflowStatus(projectRoot, parsed.runs ?? []), { title: "Workflow Status", details: { action: "workflow_status", runs: parsed.runs?.length ?? 0, pill: ARCHON_PILL_MANAGE } });
   } catch (error) {
     const workflowDir = `${projectRoot}/.archon/workflows`;
     const agentDir = `${projectRoot}/.pi/agents`;
     const workflows = listProjectFiles(workflowDir, ".yaml");
     const agents = listProjectFiles(agentDir, ".md");
-    emitArchonMessage(pi, [
+    await showArchonOverlay(pi, ctx, [
       ARCHON_STATUS_TITLE,
       "",
       `- **Project:** \`${safeCode(projectRoot)}\``,
@@ -133,7 +134,7 @@ export async function handleArchonStatusCommand(pi: ExtensionAPI, ctx: Extension
       `- **Agents:** ${formatBulletList(agents, (agent) => agent.replace(/\.md$/, ""))}`,
       `- **Workflow DB status:** failed to query (${safeCode(String(error instanceof Error ? error.message : error))})`,
       "",
-    ].join("\n"), { pill: ARCHON_PILL_MANAGE });
+    ].join("\n"), { title: "Workflow Status", details: { pill: ARCHON_PILL_MANAGE } });
   }
 }
 
@@ -159,11 +160,11 @@ export async function handleArchonWorkflowCancelCommand(pi: ExtensionAPI, runId:
   const projectRoot = ctx.cwd || process.cwd();
   try {
     await cancelArchonWorkflowRun(pi, runId, projectRoot);
-    emitArchonMessage(pi, `## Archon workflow cancelled\n\n- **Run:** \`${safeCode(runId)}\`\n`, { action: "workflow_cancel", runId, pill: ARCHON_PILL_MANAGE });
+    await showArchonOverlay(pi, ctx, `## Archon workflow cancelled\n\n- **Run:** \`${safeCode(runId)}\`\n`, { title: "Workflow Cancelled", details: { action: "workflow_cancel", runId, pill: ARCHON_PILL_MANAGE } });
     ctx.ui.notify(`Archon workflow ${runId} cancelled.`, "info");
   } catch (error) {
     const message = String(error instanceof Error ? error.message : error);
-    emitArchonMessage(pi, `## Archon workflow cancel failed\n\n- **Run:** \`${safeCode(runId)}\`\n- **Error:** ${safeCode(message)}\n`, { action: "workflow_cancel", runId, error: message, pill: ARCHON_PILL_MANAGE });
+    await showArchonOverlay(pi, ctx, `## Archon workflow cancel failed\n\n- **Run:** \`${safeCode(runId)}\`\n- **Error:** ${safeCode(message)}\n`, { title: "Cancel Failed", details: { action: "workflow_cancel", runId, error: message, pill: ARCHON_PILL_MANAGE } });
     ctx.ui.notify(`Archon workflow ${runId} cancel failed.`, "warning");
   }
 }

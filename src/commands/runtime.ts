@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { emitArchonMessage, toPillLabel, formatElapsed } from "../helpers";
+import { toPillLabel, formatElapsed } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { safeCode } from "../output-filter";
 import { generateHelpForPath } from "../command-tree";
 import type { ArchonRuntimeCleanupResult, ArchonRuntimeStartResult, RuntimeStatusSection, StepResult, PipelineStep } from "../types";
@@ -52,12 +53,12 @@ export function renderProgressReport(title: string, action: string, results: Ste
   return `${title} ${action}\n\n${body}\n\n- **Duration:** \`${formatElapsed(Math.floor(durationMs / 1000))}\`${statusLine ? `\n- **Status:** ${statusLine}` : ""}`;
 }
 
-export function emitRuntimeHelp(pi: ExtensionAPI, group: "server" | "web"): void {
-  emitArchonMessage(pi, generateHelpForPath([group]));
+export async function emitRuntimeHelp(pi: ExtensionAPI, ctx: ExtensionCommandContext, group: "server" | "web"): Promise<void> {
+  await showArchonOverlay(pi, ctx, generateHelpForPath([group]), { title: `${group} help` });
 }
 
-export function emitUnknownRuntimeSubcommand(pi: ExtensionAPI, title: string, group: "server" | "web", command: string): void {
-  emitArchonMessage(pi, `${title}\n\n- **Unknown sub-command:** \`${safeCode(command)}\`\n\n${generateHelpForPath([group])}`);
+export async function emitUnknownRuntimeSubcommand(pi: ExtensionAPI, ctx: ExtensionCommandContext, title: string, group: "server" | "web", command: string): Promise<void> {
+  await showArchonOverlay(pi, ctx, `${title}\n\n- **Unknown sub-command:** \`${safeCode(command)}\`\n\n${generateHelpForPath([group])}`, { title });
 }
 
 export async function runRuntimeProgress(
@@ -74,7 +75,7 @@ export async function runRuntimeProgress(
 ): Promise<void> {
   await runPipeline(pi, ctx, {
     ...options,
-    emitLine: (text) => emitArchonMessage(pi, text, { pill: toPillLabel(options.title.split(/[-\s]+/, 1)[0]) }),
+    emitLine: (text) => showArchonOverlay(pi, ctx, text, { title: toPillLabel(options.title.split(/[-\s]+/, 1)[0]) }),
   });
 }
 

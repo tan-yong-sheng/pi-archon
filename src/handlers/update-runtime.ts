@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { ARCHON_PILL_UPDATE, ARCHON_ROOT } from "../constants";
-import { emitArchonMessage, formatElapsed, normalizeError } from "../helpers";
+import { formatElapsed, normalizeError } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { safeCode } from "../output-filter";
 import * as fs from "node:fs";
 
@@ -34,7 +35,7 @@ export async function handleArchonUpdateCommand(
 
   // 0. Verify archon root exists and is a git repo
   if (!fs.existsSync(`${root}/.git`)) {
-    emitArchonMessage(pi, `## Archon update failed\n\n- **Error:** \`${safeCode(root)}\` is not a git repository\n`, { pill: ARCHON_PILL_UPDATE });
+    await showArchonOverlay(pi, ctx, `## Archon update failed\n\n- **Error:** \`${safeCode(root)}\` is not a git repository\n`, { title: "Update Failed", details: { pill: ARCHON_PILL_UPDATE } });
     return;
   }
 
@@ -44,7 +45,7 @@ export async function handleArchonUpdateCommand(
   const branchOut = await git(pi, ["branch", "--show-current"]);
   const branch = branchOut.stdout.trim();
   if (!branch) {
-    emitArchonMessage(pi, `## Archon update failed\n\n- **Error:** detached HEAD at \`${safeCode(root)}\`\n`, { pill: ARCHON_PILL_UPDATE });
+    await showArchonOverlay(pi, ctx, `## Archon update failed\n\n- **Error:** detached HEAD at \`${safeCode(root)}\`\n`, { title: "Update Failed", details: { pill: ARCHON_PILL_UPDATE } });
     return;
   }
   lines.push(`- **Branch:** \`${safeCode(branch)}\``);
@@ -134,13 +135,13 @@ export async function handleArchonUpdateCommand(
       }
     }
 
-    emitArchonMessage(pi, md, { pill: ARCHON_PILL_UPDATE });
+    await showArchonOverlay(pi, ctx, md, { title: "Update Complete", details: { pill: ARCHON_PILL_UPDATE } });
   } catch (error) {
     const message = normalizeError(error);
     let md = `## Archon update failed\n\n`;
     md += lines.map((l) => `${l}`).join("\n");
     md += `\n- **Error:** \`${safeCode(message)}\``;
     md += `\n- **Duration:** \`${formatElapsed(Math.floor((Date.now() - startMs) / 1000))}\`\n`;
-    emitArchonMessage(pi, md, { pill: ARCHON_PILL_UPDATE });
+    await showArchonOverlay(pi, ctx, md, { title: "Update Failed", details: { pill: ARCHON_PILL_UPDATE } });
   }
 }

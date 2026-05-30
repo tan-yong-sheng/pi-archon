@@ -13,12 +13,12 @@ interface ToolCommandContext extends ExtensionCommandContext {
 	ui: ExtensionUiShim;
 }
 import {
-	emitArchonMessage,
 	formatArchonMessage,
 	formatToolTextResult,
 	normalizeString,
 	splitArgs,
 } from "./helpers";
+import { showArchonOverlay } from "./ui/archon-overlay";
 import { redactSecrets, safeCode } from "./output-filter";
 import { generateHelpForPath, resolveCommandPath } from "./command-tree";
 
@@ -119,10 +119,11 @@ export async function handleCliFallback(
 		tokens.length > 1
 			? ` Did you mean \`/archon ${tokens.join(" ")}\`?`
 			: ` Type \`/archon help\` for available commands.`;
-	emitArchonMessage(
-		pi,
+	await showArchonOverlay(
+		pi, _ctx,
 		formatArchonMessage(
 			`- **Unknown command:** \`${safeCode(firstToken)}\`${hint}`,
 		),
+		{ title: "Unknown Command" },
 	);
 }

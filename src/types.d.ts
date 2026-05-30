@@ -357,7 +357,7 @@ export interface PipelineConfig<TData = unknown> {
 		totalDurationMs: number,
 		data?: TData,
 	) => string;
-	emitLine?: (text: string) => void;
+	emitLine?: (text: string) => void | Promise<void>;
 	successLabel?: string;
 	errorLabel?: string;
 }
@@ -373,7 +373,7 @@ export interface PhaseRunnerConfig<TData = unknown> {
 		totalDurationMs: number,
 		data?: TData,
 	) => string;
-	emitLine?: (text: string) => void;
+	emitLine?: (text: string) => void | Promise<void>;
 	successLabel?: string;
 	errorLabel?: string;
 	maxLines?: number;

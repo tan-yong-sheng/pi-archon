@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { emitArchonMessage } from "../helpers";
+import { showArchonOverlay } from "../ui/archon-overlay";
 import { generateFullHelp, generateScopedHelp, getScopedMetaByHandlerKey } from "../command-tree";
 import { handlerRegistry, isHandlerKey } from "../handlers/registry";
 import type { ArchonHandler } from "../handlers/base";
@@ -33,18 +33,18 @@ export abstract class ArchonCommand {
     return this.handler.runTool(pi, ctx, args);
   }
 
-  showHelpIfRequested(pi: ExtensionAPI, args: string[]): boolean {
+  async showHelpIfRequested(pi: ExtensionAPI, ctx: ExtensionCommandContext, args: string[]): Promise<boolean> {
     if (!args.some((arg) => HELP_TOKENS.has(arg.toLowerCase()))) return false;
     const meta = (this.constructor as typeof ArchonCommand).meta;
     const scoped = getScopedMetaByHandlerKey(this.handlerKey);
-    emitArchonMessage(pi, isGroup(meta) ? generateFullHelp() : generateScopedHelp(scoped ?? { ...meta, path: this.handlerKey.replace(/:/g, " ") }));
+    await showArchonOverlay(pi, ctx, isGroup(meta) ? generateFullHelp() : generateScopedHelp(scoped ?? { ...meta, path: this.handlerKey.replace(/:/g, " ") }), { title: "Archon Help" });
     return true;
   }
 }
 
 export abstract class HelpableArchonCommand extends ArchonCommand {
   async execute(pi: ExtensionAPI, args: string[], ctx: ExtensionCommandContext): Promise<void> {
-    if (this.showHelpIfRequested(pi, args)) return;
+    if (await this.showHelpIfRequested(pi, ctx, args)) return;
     await super.execute(pi, args, ctx);
   }
 }

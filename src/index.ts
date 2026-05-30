@@ -86,3 +86,4 @@ export type { CommandNode, SubCommandMeta, CommandGroupMeta, PositionalArg, Flag
 export { runWorkflowBackground, cancelRun, getActiveRuns, getActiveRun, type ActiveWorkflowRun } from "./workflow-background";
 export { handleArchonsCommand } from "./archons-command";
 export { WorkflowOverlay, fmtElapsed, padLine } from "./ui/workflow-overlay";
+export { showArchonOverlay, type ArchonOverlayOptions } from "./ui/archon-overlay";
