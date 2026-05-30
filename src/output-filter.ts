@@ -347,13 +347,108 @@ export function tryParseStderrDagEvent(line: string): DagEvent | undefined {
 	return undefined;
 }
 
-/** Try to parse any line (JSON or stderr) into a DagEvent. */
+/** Try to parse any line (JSON log or stderr render) into a DagEvent.
+ *
+ * Archon CLI emits two kinds of DAG info:
+ * 1. Stderr render lines like `[nodeId] Started` / `[nodeId] Completed (Xs)`
+ * 2. Stdout JSON log lines like `{"msg":"dag_node_started","nodeId":"...","type":"bash"}`
+ *
+ * We try JSON first (richer data with nodeType/provider), then stderr patterns.
+ */
 export function tryParseDagEvent(line: string): DagEvent | undefined {
 	const trimmed = line.trim();
 	if (!trimmed) return undefined;
 
-	// Try stderr patterns
+	// Try JSON structured log first (stdout from Archon's pino logger)
+	const jsonEvent = tryParseJsonDagEvent(trimmed);
+	if (jsonEvent) return jsonEvent;
+
+	// Try stderr render patterns
 	return tryParseStderrDagEvent(trimmed);
+}
+
+/** Parse Archon JSON structured log lines from stdout.
+ *
+ * Key `msg` values from workflow.dag-executor and workflow.executor:
+ * - dag_workflow_starting: {workflowName, nodeCount, layerCount}
+ * - dag_workflow_finished: {nodeCount, anyCompleted, anyFailed}
+ * - dag_node_started: {nodeId, type?, provider?}
+ * - dag_node_completed: {nodeId, durationMs, costUsd?, numTurns?}
+ */
+function tryParseJsonDagEvent(line: string): DagEvent | undefined {
+	// Quick check — JSON log lines always start with {
+	if (!line.startsWith("{")) return undefined;
+
+	let obj: Record<string, unknown>;
+	try {
+		obj = JSON.parse(line) as Record<string, unknown>;
+	} catch {
+		return undefined;
+	}
+
+	if (typeof obj !== "object" || !obj) return undefined;
+	const msg = typeof obj.msg === "string" ? obj.msg : "";
+	const mod = typeof obj.module === "string" ? obj.module : "";
+
+	// Only process workflow.dag-executor and workflow.executor messages
+	if (
+		!mod.startsWith("workflow.dag-executor") &&
+		!mod.startsWith("workflow.executor")
+	) {
+		return undefined;
+	}
+
+	switch (msg) {
+		case "dag_workflow_starting": {
+			const workflowName =
+				typeof obj.workflowName === "string" ? obj.workflowName : undefined;
+			if (workflowName) {
+				return { type: "workflow_started", workflowName };
+			}
+			return undefined;
+		}
+
+		case "dag_node_started": {
+			const nodeId = typeof obj.nodeId === "string" ? obj.nodeId : undefined;
+			if (!nodeId) return undefined;
+			const nodeType = typeof obj.type === "string" ? obj.type : undefined;
+			const provider =
+				typeof obj.provider === "string" ? obj.provider : undefined;
+			return { type: "node_started", nodeId, nodeType, provider };
+		}
+
+		case "dag_node_completed": {
+			const nodeId = typeof obj.nodeId === "string" ? obj.nodeId : undefined;
+			if (!nodeId) return undefined;
+			const durationMs =
+				typeof obj.durationMs === "number" ? obj.durationMs : undefined;
+			const costUsd =
+				typeof obj.costUsd === "number" ? obj.costUsd : undefined;
+			const numTurns =
+				typeof obj.numTurns === "number" ? obj.numTurns : undefined;
+			const duration =
+				durationMs != null
+					? durationMs >= 60000
+						? `${Math.floor(durationMs / 60000)}m${Math.round((durationMs % 60000) / 1000)}s`
+						: durationMs >= 1000
+							? `${(durationMs / 1000).toFixed(1)}s`
+							: `${durationMs}ms`
+					: "?";
+			return { type: "node_completed", nodeId, duration, costUsd, numTurns };
+		}
+
+		case "dag_workflow_finished": {
+			const anyFailed =
+				typeof obj.anyFailed === "boolean" ? obj.anyFailed : false;
+			if (anyFailed) {
+				return { type: "workflow_failed", error: "one or more nodes failed" };
+			}
+			return { type: "workflow_completed" };
+		}
+
+		default:
+			return undefined;
+	}
 }
 
 function stepFromDagEvent(event: DagEvent): string | undefined {

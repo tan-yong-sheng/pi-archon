@@ -5,14 +5,20 @@
  * an optional cancel hint. Designed to float over the terminal
  * while the user continues working.
  *
+ * Supports scrolling via ↑/↓ keys with persistent scroll offset.
+ *
  * This component is created inside a ctx.ui.custom() callback and
  * attached to the screen via tui.showOverlay(component, { nonCapturing: true }).
  * The TUI system calls render() each frame; we call tui.requestRender()
  * after updating tracker state.
  */
-
 import type { Component, Theme } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth, matchesKey, Key } from "@mariozechner/pi-tui";
+import {
+	truncateToWidth,
+	visibleWidth,
+	matchesKey,
+	Key,
+} from "@mariozechner/pi-tui";
 import type { DagProgressTracker } from "../dag-tracker";
 import type { DagNodeState } from "../types";
 
@@ -56,6 +62,9 @@ export class WorkflowOverlay implements Component {
 	private startedAt: number;
 	private _expanded = false;
 
+	// Scroll state — persists across renders so ↑/↓ don't reset
+	private scrollOffset = 0;
+
 	constructor(opts: WorkflowOverlayOptions, theme: Theme) {
 		this.workflowName = opts.workflowName;
 		this.queryPreview = opts.queryPreview;
@@ -66,10 +75,10 @@ export class WorkflowOverlay implements Component {
 	}
 
 	// ── Public API ────────────────────────────────────────────
-
 	/** Reset start time when reused. */
 	reset(): void {
 		this.startedAt = Date.now();
+		this.scrollOffset = 0;
 	}
 
 	get expanded(): boolean {
@@ -78,11 +87,12 @@ export class WorkflowOverlay implements Component {
 
 	set expanded(v: boolean) {
 		this._expanded = v;
+		// Reset scroll when toggling expand mode
+		this.scrollOffset = 0;
 	}
 
 	// ── Component interface ───────────────────────────────────
-
-	render(width: number): string[] {
+	render(width: number, _height?: number): string[] {
 		const w = Math.max(width, 24);
 		const th = this.theme;
 		const elapsed = fmtElapsed(
@@ -110,7 +120,7 @@ export class WorkflowOverlay implements Component {
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
 		lines.push(
 			border(bl) +
-				padLine(`${titleText}  ${th.fg("dim", timeText)}`, innerWidth) +
+				padLine(`${titleText} ${th.fg("dim", timeText)}`, innerWidth) +
 				border(bl),
 		);
 
@@ -132,10 +142,31 @@ export class WorkflowOverlay implements Component {
 		// ── Separator ────────────────────────────────────────
 		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
-		// ── Node list ────────────────────────────────────────
+		// ── Node list with scroll ────────────────────────────
 		const nodes = tracker.nodes;
 		const maxVisible = this._expanded ? 12 : 5;
-		const visible = nodes.slice(0, maxVisible);
+
+		// Clamp scroll offset
+		const maxScroll = Math.max(0, nodes.length - maxVisible);
+		if (this.scrollOffset > maxScroll) this.scrollOffset = maxScroll;
+		if (this.scrollOffset < 0) this.scrollOffset = 0;
+
+		const visible = nodes.slice(
+			this.scrollOffset,
+			this.scrollOffset + maxVisible,
+		);
+
+		// Scroll indicator if scrolled
+		if (this.scrollOffset > 0) {
+			lines.push(
+				border(bl) +
+					padLine(
+						th.fg("dim", ` ↑ ${this.scrollOffset} more above`),
+						innerWidth,
+					) +
+					border(bl),
+			);
+		}
 
 		for (const node of visible) {
 			const icon = NODE_ICONS[node.state] ?? "○";
@@ -158,6 +189,12 @@ export class WorkflowOverlay implements Component {
 				suffix = th.fg("warning", ` ${msg}`);
 			}
 
+			// Node type badge (e.g., "bash", "prompt")
+			let typeBadge = "";
+			if (node.nodeType) {
+				typeBadge = th.fg("muted", ` [${node.nodeType}]`);
+			}
+
 			// Iteration badge
 			let iterBadge = "";
 			if (node.currentIteration != null && node.maxIterations != null) {
@@ -175,15 +212,21 @@ export class WorkflowOverlay implements Component {
 				toolBadge = th.fg("dim", ` 🔧${node.activeTool}`);
 			}
 
-			const line = `${th.fg(color, icon)} ${name}${iterBadge}${toolBadge}${suffix}`;
+			// Provider badge for running AI nodes
+			let providerBadge = "";
+			if (node.state === "running" && node.provider && !node.activeTool) {
+				providerBadge = th.fg("dim", ` via ${node.provider}`);
+			}
+
+			const line = `${th.fg(color, icon)} ${name}${typeBadge}${iterBadge}${toolBadge}${providerBadge}${suffix}`;
 			lines.push(border(bl) + padLine(` ${line}`, innerWidth) + border(bl));
 		}
 
-		if (nodes.length > maxVisible) {
-			const remaining = nodes.length - maxVisible;
+		if (nodes.length > this.scrollOffset + maxVisible) {
+			const remaining = nodes.length - this.scrollOffset - maxVisible;
 			lines.push(
 				border(bl) +
-					padLine(th.fg("dim", ` … +${remaining} more`), innerWidth) +
+					padLine(th.fg("dim", ` ↓ ${remaining} more below`), innerWidth) +
 					border(bl),
 			);
 		}
@@ -197,12 +240,12 @@ export class WorkflowOverlay implements Component {
 		}
 
 		// ── Footer ───────────────────────────────────────────
+		const scrollHint = nodes.length > maxVisible ? " · ↑/↓ scroll" : "";
 		const footerHint = tracker.workflowDone
 			? tracker.workflowError
 				? th.fg("error", " failed ")
 				: th.fg("success", " complete ")
-			: th.fg("dim", " Esc=cancel · e=expand ");
-
+			: th.fg("dim", ` Esc=cancel · e=expand${scrollHint} `);
 		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
 		return lines;
@@ -214,17 +257,46 @@ export class WorkflowOverlay implements Component {
 			this.onCancel?.();
 			return true;
 		}
+
 		// 'e' = toggle expand
 		if (data === "e") {
 			this._expanded = !this._expanded;
 			return true;
 		}
+
+		// ↑ = scroll up
+		if (matchesKey(data, Key.up)) {
+			if (this.scrollOffset > 0) {
+				this.scrollOffset--;
+				return true;
+			}
+			return false;
+		}
+
+		// ↓ = scroll down
+		if (matchesKey(data, Key.down)) {
+			this.scrollOffset++;
+			// Will be clamped in render()
+			return true;
+		}
+
+		// Page Up
+		if (matchesKey(data, "pageUp")) {
+			this.scrollOffset = Math.max(0, this.scrollOffset - 5);
+			return true;
+		}
+
+		// Page Down
+		if (matchesKey(data, "pageDown")) {
+			this.scrollOffset += 5;
+			return true;
+		}
+
 		return false;
 	}
 }
 
 // ── Shared helpers ───────────────────────────────────────────
-
 export function padLine(text: string, width: number): string {
 	const pad = Math.max(0, width - visibleWidth(text));
 	return text + " ".repeat(pad);

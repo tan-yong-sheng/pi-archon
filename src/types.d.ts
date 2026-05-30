@@ -252,8 +252,19 @@ export interface WorkflowRunRecord {
 /** Discriminated DAG event emitted by Archon CLI stderr or --json-events */
 export type DagEvent =
 	| { type: "workflow_started"; workflowName: string }
-	| { type: "node_started"; nodeId: string }
-	| { type: "node_completed"; nodeId: string; duration: string }
+	| {
+			type: "node_started";
+			nodeId: string;
+			nodeType?: string;
+			provider?: string;
+	  }
+	| {
+			type: "node_completed";
+			nodeId: string;
+			duration: string;
+			costUsd?: number;
+			numTurns?: number;
+	  }
 	| { type: "node_failed"; nodeId: string; error: string }
 	| { type: "node_skipped"; nodeId: string; reason: string }
 	| { type: "approval_pending"; nodeId: string; message: string }
@@ -313,6 +324,14 @@ export interface DagNodeInfo {
 	iterations?: LoopIterationInfo[];
 	currentIteration?: number;
 	maxIterations?: number;
+	/** Node type from JSON log (bash, prompt, command, script, loop, approval, cancel) */
+	nodeType?: string;
+	/** Provider for AI nodes (claude, openai, etc.) */
+	provider?: string;
+	/** Cost in USD for completed AI nodes */
+	costUsd?: number;
+	/** Number of conversation turns for completed AI nodes */
+	numTurns?: number;
 }
 
 export interface ToolActivity {

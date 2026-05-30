@@ -10,7 +10,8 @@ import { formatElapsed } from "./helpers";
 
 /**
  * DagProgressTracker maintains an ordered list of DAG nodes discovered
- * from Archon CLI stderr and updates their state in real-time.
+ * from Archon CLI output (stderr render lines + stdout JSON logs) and
+ * updates their state in real-time.
  *
  * Also tracks loop iteration progress for nodes that run as loops.
  * Since the Archon CLI does not emit loop iteration events to stderr,
@@ -18,10 +19,10 @@ import { formatElapsed } from "./helpers";
  * a periodic DB query during the run).
  *
  * Usage:
- * const tracker = new DagProgressTracker();
- * tracker.onLine("[investigate] Started", false);
- * tracker.onLine("[investigate] Completed (45s)", false);
- * console.log(tracker.nodes); // → [{ id: "investigate", state: "done", duration: "45s" }]
+ *   const tracker = new DagProgressTracker();
+ *   tracker.onLine("[investigate] Started", false);
+ *   tracker.onLine("[investigate] Completed (45s)", false);
+ *   console.log(tracker.nodes); // → [{ id: "investigate", state: "done", duration: "45s" }]
  */
 export class DagProgressTracker {
 	#nodes = new Map<string, DagNodeInfo>();
@@ -37,9 +38,7 @@ export class DagProgressTracker {
 
 	/** Nodes in discovery order */
 	get nodes(): readonly DagNodeInfo[] {
-		return this.#nodeOrder
-			.map((id) => this.#nodes.get(id)!)
-			.filter(Boolean);
+		return this.#nodeOrder.map((id) => this.#nodes.get(id)!).filter(Boolean);
 	}
 
 	get workflowName(): string | undefined {
@@ -64,9 +63,8 @@ export class DagProgressTracker {
 	}
 
 	get completedCount(): number {
-		return this.nodes.filter(
-			(n) => n.state === "done" || n.state === "skipped",
-		).length;
+		return this.nodes.filter((n) => n.state === "done" || n.state === "skipped")
+			.length;
 	}
 
 	get errorCount(): number {
@@ -78,19 +76,14 @@ export class DagProgressTracker {
 	}
 
 	get runningNodeIds(): readonly string[] {
-		return this.nodes
-			.filter((n) => n.state === "running")
-			.map((n) => n.id);
+		return this.nodes.filter((n) => n.state === "running").map((n) => n.id);
 	}
 
 	/** Get the active tool for a specific node */
 	getActiveTool(nodeId: string): ToolActivity | undefined {
 		// Find the most recent unfinished tool for this node
 		for (const tool of this.#tools.values()) {
-			if (
-				tool.stepName === nodeId &&
-				tool.durationMs === undefined
-			) {
+			if (tool.stepName === nodeId && tool.durationMs === undefined) {
 				return tool;
 			}
 		}
@@ -119,6 +112,8 @@ export class DagProgressTracker {
 				this.upsertNode(event.nodeId, {
 					state: "running",
 					startedAt: Date.now(),
+					nodeType: event.nodeType,
+					provider: event.provider,
 				});
 				this.#approvalNodeId = undefined;
 				break;
@@ -130,6 +125,8 @@ export class DagProgressTracker {
 					duration: event.duration,
 					activeTool: undefined,
 					startedAt,
+					costUsd: event.costUsd,
+					numTurns: event.numTurns,
 				});
 				break;
 			}
@@ -160,14 +157,11 @@ export class DagProgressTracker {
 				break;
 
 			case "tool_started":
-				this.#tools.set(
-					`${event.stepName}:${event.toolName}:${Date.now()}`,
-					{
-						toolName: event.toolName,
-						stepName: event.stepName,
-						startedAt: Date.now(),
-					},
-				);
+				this.#tools.set(`${event.stepName}:${event.toolName}:${Date.now()}`, {
+					toolName: event.toolName,
+					stepName: event.stepName,
+					startedAt: Date.now(),
+				});
 				this.upsertNode(event.stepName, {
 					activeTool: event.toolName,
 				});

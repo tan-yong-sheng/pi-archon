@@ -35,7 +35,6 @@ import {
 	queryRecentRuns,
 	queryRunArtifacts,
 	queryRunNodeSummaries,
-	
 	type WorkflowRunRecord,
 	type WorkflowArtifact,
 } from "./artifact-query";
@@ -467,7 +466,7 @@ class ArchonsDashboard implements Component {
 						: "";
 					items.push({
 						value: `node:${node.id}`,
-						label: `${th.fg("accent", "●")} ${node.id}${th.fg("dim", elapsed)}${iterBadge}${toolBadge}`,
+						label: `${th.fg("accent", "●")} ${node.id}${node.nodeType ? th.fg("muted", ` [${node.nodeType}]`) : ""}${th.fg("dim", elapsed)}${iterBadge}${toolBadge}`,
 						description: node.approvalMessage ?? node.state,
 					});
 				}

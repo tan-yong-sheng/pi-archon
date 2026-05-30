@@ -185,10 +185,22 @@ export function runWorkflowBackground(
 					}
 				});
 
-				// Also capture stdout for the final result
+				// Capture stdout for final result AND parse JSON DAG events
+				// Archon JSON structured logs (pino) carry richer data than stderr
+				// render lines: nodeType, provider, durationMs, costUsd, numTurns
 				let stdoutBuf = "";
 				proc.stdout?.on("data", (chunk: Buffer) => {
-					stdoutBuf += chunk.toString("utf-8");
+					const text = chunk.toString("utf-8");
+					stdoutBuf += text;
+					// Parse each line for JSON DAG events
+					const lines = text.split(/\n/);
+					for (const line of lines) {
+						if (!line.trim()) continue;
+						const event = tryParseDagEvent(line);
+						if (event) {
+							tracker.applyEvent(event);
+						}
+					}
 				});
 
 				let stderrBuf = "";
@@ -244,7 +256,7 @@ export function runWorkflowBackground(
 				entry.loopPollTimer = loopPollTimer;
 
 				// ── Handle process exit ───────────────────────────
-				proc.on("close", (exitCode) => {
+				proc.on("close", async (exitCode) => {
 					const durationMs = Date.now() - entry.startedAt;
 
 					// Apply final workflow event
@@ -295,52 +307,39 @@ export function runWorkflowBackground(
 						.join("\n");
 
 					// Query artifacts (best-effort)
-					const artifactsSection = "";
+					// Query artifacts (best-effort, awaited)
+					let artifacts: Awaited<ReturnType<typeof queryRunArtifacts>> = [];
 					try {
-						const latestRunId = findLatestRunId(workflow, cwd);
-						if (latestRunId) {
-							findLatestRunId(workflow, cwd).then((rid) => {
-								if (!rid) return;
-								queryRunArtifacts(rid).then((artifacts) => {
-									if (artifacts.length > 0) {
-										const section = renderArtifactsSection(artifacts);
-										// Post follow-up message with artifacts
-										pi.sendMessage?.(
-											{
-												customType: "archon",
-												content: `## Archon ${workflow.toUpperCase()} Artifacts\n${section}`,
-												display: true,
-												details: {
-													workflow,
-													artifacts,
-													pill: toPillLabel(workflow),
-												},
-											},
-											{ deliverAs: "nextTurn" },
-										);
-									}
-								});
-							});
-						}
+						const rid = await findLatestRunId(workflow, cwd);
+						if (rid) artifacts = await queryRunArtifacts(rid);
 					} catch {
 						// Best-effort
 					}
 
-					// Post the main result message
+					// Build result with artifacts inline
+					let resultContent = cleaned;
+					if (artifacts.length > 0) {
+						const section = renderArtifactsSection(artifacts);
+						resultContent += `\n\n## Artifacts\n${section}`;
+					}
+
+					// Post the main result message (use "steer" to deliver immediately,
+					// not "nextTurn" which waits for the next user prompt)
 					pi.sendMessage?.(
 						{
 							customType: "archon",
-							content: cleaned,
+							content: resultContent,
 							display: true,
 							details: {
 								workflow,
 								query,
 								exitCode: runResult.exitCode,
 								durationMs,
+								artifacts,
 								pill: toPillLabel(workflow),
 							},
 						},
-						{ deliverAs: "nextTurn" },
+						{ deliverAs: "steer" },
 					);
 
 					// Toast notification
@@ -388,7 +387,7 @@ export function runWorkflowBackground(
 								pill: toPillLabel(workflow),
 							},
 						},
-						{ deliverAs: "nextTurn" },
+						{ deliverAs: "steer" },
 					);
 
 					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
