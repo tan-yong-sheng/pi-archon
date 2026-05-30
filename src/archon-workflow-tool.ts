@@ -8,6 +8,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 export function registerArchonWorkflowTool(_pi: ExtensionAPI): void {
-  // Task 2: full tool registration with TypeBox schema,
-  // renderCall, renderResult, and all action handlers.
+	// Task 2: full tool registration with TypeBox schema,
+	// renderCall, renderResult, and all action handlers.
 }
