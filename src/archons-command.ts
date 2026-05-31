@@ -242,17 +242,25 @@ class ArchonsDashboard implements Component {
 		this.list = this.buildRunList();
 
 		// Poll for updates on active runs
+		// IMPORTANT: preserve selected index across rebuilds to prevent
+		// cursor from resetting to top every 1.5s
 		this.pollTimer = setInterval(() => {
+			const prevIndex = this.list.selectedIndex;
 			if (this.level === "run-list") {
 				this.activeRuns = getActiveRuns();
-				// Rebuild list if active run count changed
 				this.list = this.buildRunList();
 			} else if (this.level === "run-detail" && this.selectedRunId) {
+				this.activeRuns = getActiveRuns();
 				const entry = this.activeRuns.get(this.selectedRunId);
 				if (entry) {
-					// Live update the detail view for active runs
 					this.list = this.buildRunDetailList(this.selectedRunId);
 				}
+			}
+			// Restore cursor position after rebuild
+			if (prevIndex > 0) {
+				this.list.setSelectedIndex(
+					Math.min(prevIndex, this.list.filteredItems.length - 1),
+				);
 			}
 			this.tui.requestRender();
 		}, 1500);
@@ -263,7 +271,13 @@ class ArchonsDashboard implements Component {
 			const cwd = this.ctx.cwd || process.cwd();
 			this.recentRuns = await queryRecentRuns(cwd, { limit: 15 });
 			if (this.level === "run-list") {
+				const prevIdx = this.list.selectedIndex;
 				this.list = this.buildRunList();
+				if (prevIdx > 0) {
+					this.list.setSelectedIndex(
+						Math.min(prevIdx, this.list.filteredItems.length - 1),
+					);
+				}
 				this.tui.requestRender();
 			}
 		} catch {
@@ -353,7 +367,7 @@ class ArchonsDashboard implements Component {
 				items.push({
 					value: `launch:${name}`,
 					label: `${th.fg("accent", "▸")} ${name}`,
-					description: "Select to launch this workflow",
+					description: "↵ Enter to launch",
 				});
 			}
 		}
@@ -382,12 +396,16 @@ class ArchonsDashboard implements Component {
 	private onRunListSelect(item: SelectItem): void {
 		const val = item.value;
 
-		// Section headers — ignore
+		// Section headers — skip to next selectable item
 		if (
 			val.startsWith("__section_") ||
 			val === "__more__" ||
 			val === "__empty__"
 		) {
+			const nextIdx = this.list.selectedIndex + 1;
+			if (nextIdx < this.list.filteredItems.length) {
+				this.list.setSelectedIndex(nextIdx);
+			}
 			return;
 		}
 
@@ -674,8 +692,12 @@ class ArchonsDashboard implements Component {
 	private onRunDetailSelect(item: SelectItem): void {
 		const val = item.value;
 
-		// Section headers — ignore
+		// Section headers — skip to next selectable item
 		if (val.startsWith("__section_") || val === "__error__") {
+			const nextIdx = this.list.selectedIndex + 1;
+			if (nextIdx < this.list.filteredItems.length) {
+				this.list.setSelectedIndex(nextIdx);
+			}
 			return;
 		}
 
@@ -901,9 +923,9 @@ class ArchonsDashboard implements Component {
 		// Footer with keyboard hints
 		let footer: string;
 		if (this.level === "run-list") {
-			footer = " Enter=select · Esc=close ";
+			footer = " Enter=open/launch · ↑/↓ navigate · Esc=close ";
 		} else if (this.level === "run-detail") {
-			footer = " Enter=select · Esc=back ";
+			footer = " Enter=drill in · Esc=back ";
 		} else {
 			footer = " Esc=back ";
 		}

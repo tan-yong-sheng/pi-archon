@@ -159,7 +159,7 @@ export const Key: {
 		scrollInfo?: (text: string) => string;
 		noMatch?: (text: string) => string;
 	}
-	export class SelectList {
+export class SelectList {
 		constructor(
 			items: SelectItem[],
 			maxHeight: number,
@@ -167,9 +167,13 @@ export const Key: {
 		);
 		onSelect: (item: SelectItem) => void;
 		onCancel: () => void;
+		selectedIndex: number;
+		filteredItems: SelectItem[];
+		setSelectedIndex(index: number): void;
+		setFilter(filter: string): void;
 		handleInput(data: string): void;
 		render(width: number): string[];
-	}
+}
 	export class DynamicBorder {
 		constructor(borderFn: (s: string) => string);
 	}
