@@ -332,6 +332,8 @@ export interface DagNodeInfo {
 	costUsd?: number;
 	/** Number of conversation turns for completed AI nodes */
 	numTurns?: number;
+	/** Ring buffer of recent log/output lines captured between node Started and Completed */
+	logLines: string[];
 }
 
 export interface ToolActivity {

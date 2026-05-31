@@ -144,15 +144,16 @@ export function runWorkflowBackground(
 					theme,
 				);
 
-				// Show as non-capturing overlay in the top-right corner
+				// Show as non-capturing overlay — width 52 for log inspector
 				const handle = tui.showOverlay(overlay, {
 					nonCapturing: true,
 					anchor: "top-right",
-					width: 44,
+					width: 52,
 					margin: { top: 1, right: 2 },
 				});
 
 				entry.overlayHandle = handle;
+				overlay.setOverlayHandle(handle);
 
 				// ── Spawn the archon CLI subprocess ──────────────
 				const { cmd, args: baseArgs } = resolveArchonBin(cwd);
@@ -173,39 +174,40 @@ export function runWorkflowBackground(
 
 				entry.process = proc;
 
-				// ── Stream stderr into the tracker ───────────────
-				proc.stderr?.on("data", (chunk: Buffer) => {
-					const lines = chunk.toString("utf-8").split(/\n/);
-					for (const line of lines) {
-						if (!line.trim()) continue;
-						const event = tryParseDagEvent(line);
-						if (event) {
-							tracker.applyEvent(event);
-						}
-					}
-				});
-
-				// Capture stdout for final result AND parse JSON DAG events
-				// Archon JSON structured logs (pino) carry richer data than stderr
-				// render lines: nodeType, provider, durationMs, costUsd, numTurns
+				// ── Stream stdout/stderr: parse DAG events + capture node logs + buffer ──
 				let stdoutBuf = "";
+				let stderrBuf = "";
+
 				proc.stdout?.on("data", (chunk: Buffer) => {
 					const text = chunk.toString("utf-8");
 					stdoutBuf += text;
-					// Parse each line for JSON DAG events
 					const lines = text.split(/\n/);
 					for (const line of lines) {
 						if (!line.trim()) continue;
 						const event = tryParseDagEvent(line);
 						if (event) {
 							tracker.applyEvent(event);
+						} else {
+							// Non-DAG stdout line → capture as node log
+							tracker.appendLogLine(line);
 						}
 					}
 				});
 
-				let stderrBuf = "";
 				proc.stderr?.on("data", (chunk: Buffer) => {
-					stderrBuf += chunk.toString("utf-8");
+					const text = chunk.toString("utf-8");
+					stderrBuf += text;
+					const lines = text.split(/\n/);
+					for (const line of lines) {
+						if (!line.trim()) continue;
+						const event = tryParseDagEvent(line);
+						if (event) {
+							tracker.applyEvent(event);
+						} else {
+							// Non-DAG stderr line (node output, status text) → node log
+							tracker.appendLogLine(line);
+						}
+					}
 				});
 
 				// ── Poll: request overlay re-render at regular interval ──

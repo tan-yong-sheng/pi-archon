@@ -7,11 +7,17 @@ import type {
 } from "./types";
 import { tryParseDagEvent } from "./output-filter";
 import { formatElapsed } from "./helpers";
+import { MAX_NODE_LOG_LINES } from "./constants";
 
 /**
  * DagProgressTracker maintains an ordered list of DAG nodes discovered
  * from Archon CLI output (stderr render lines + stdout JSON logs) and
  * updates their state in real-time.
+ *
+ * Also captures node-scoped log lines — any stdout/stderr output that
+ * appears between a node's Started and Completed events is buffered
+ * into the node's logLines ring buffer for inspection via the
+ * WorkflowOverlay log inspector view.
  *
  * Also tracks loop iteration progress for nodes that run as loops.
  * Since the Archon CLI does not emit loop iteration events to stderr,
@@ -21,8 +27,9 @@ import { formatElapsed } from "./helpers";
  * Usage:
  *   const tracker = new DagProgressTracker();
  *   tracker.onLine("[investigate] Started", false);
+ *   tracker.onLine("some output line", true);
  *   tracker.onLine("[investigate] Completed (45s)", false);
- *   console.log(tracker.nodes); // → [{ id: "investigate", state: "done", duration: "45s" }]
+ *   console.log(tracker.nodes[0].logLines); // → ["some output line"]
  */
 export class DagProgressTracker {
 	#nodes = new Map<string, DagNodeInfo>();
@@ -81,11 +88,20 @@ export class DagProgressTracker {
 
 	/** Get the active tool for a specific node */
 	getActiveTool(nodeId: string): ToolActivity | undefined {
-		// Find the most recent unfinished tool for this node
 		for (const tool of this.#tools.values()) {
 			if (tool.stepName === nodeId && tool.durationMs === undefined) {
 				return tool;
 			}
+		}
+		return undefined;
+	}
+
+	/** Get the nodeId of the currently-running node (last one started). */
+	get currentRunningNodeId(): string | undefined {
+		// Find the last node in "running" state
+		for (let i = this.#nodeOrder.length - 1; i >= 0; i--) {
+			const node = this.#nodes.get(this.#nodeOrder[i]);
+			if (node?.state === "running") return node.id;
 		}
 		return undefined;
 	}
@@ -98,6 +114,46 @@ export class DagProgressTracker {
 		if (!event) return false;
 		this.applyEvent(event);
 		return true;
+	}
+
+	/**
+	 * Append a raw output line to the currently-running node's log buffer.
+	 * Called for lines that are NOT recognized as DAG events but appear
+	 * between node Started/Completed markers — these are the actual
+	 * tool outputs, AI responses, and bash stdout/stderr.
+	 *
+	 * Noisy internal lines (JSON logs, status emojis, bracket prefixes)
+	 * are filtered out so only meaningful output reaches the inspector.
+	 */
+	appendLogLine(line: string): void {
+		const trimmed = line.trim();
+		if (!trimmed) return;
+		if (isLogNoise(trimmed)) return;
+		const nodeId = this.currentRunningNodeId;
+		if (!nodeId) return;
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		node.logLines.push(line);
+		// Ring buffer: keep only the last MAX_NODE_LOG_LINES
+		if (node.logLines.length > MAX_NODE_LOG_LINES) {
+			node.logLines.splice(0, node.logLines.length - MAX_NODE_LOG_LINES);
+		}
+	}
+
+	/**
+	 * Append a raw output line to a specific node's log buffer.
+	 * Used when we know which node the output belongs to.
+	 */
+	appendLogLineTo(nodeId: string, line: string): void {
+		const trimmed = line.trim();
+		if (!trimmed) return;
+		if (isLogNoise(trimmed)) return;
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		node.logLines.push(line);
+		if (node.logLines.length > MAX_NODE_LOG_LINES) {
+			node.logLines.splice(0, node.logLines.length - MAX_NODE_LOG_LINES);
+		}
 	}
 
 	/** Apply a structured DagEvent to update node states */
@@ -168,7 +224,6 @@ export class DagProgressTracker {
 				break;
 
 			case "tool_completed": {
-				// Find and update the matching tool
 				for (const [key, tool] of this.#tools) {
 					if (
 						tool.stepName === event.stepName &&
@@ -182,7 +237,6 @@ export class DagProgressTracker {
 						break;
 					}
 				}
-				// Clear activeTool only if it matches the completed tool
 				const node = this.#nodes.get(event.stepName);
 				if (node?.activeTool === event.toolName) {
 					this.upsertNode(event.stepName, {
@@ -211,7 +265,6 @@ export class DagProgressTracker {
 				const existing = this.#nodes.get(event.nodeId);
 				if (existing?.iterations) {
 					const iterations = [...existing.iterations];
-					// Update the matching iteration
 					const idx = iterations.findIndex(
 						(it) => it.iteration === event.iteration,
 					);
@@ -298,10 +351,43 @@ export class DagProgressTracker {
 		if (existing) {
 			this.#nodes.set(id, { ...existing, ...patch });
 		} else {
-			// New node — must provide a state
 			const state = patch.state ?? "queued";
-			this.#nodes.set(id, { id, ...patch, state });
+			const logLines = patch.logLines ?? [];
+			this.#nodes.set(id, { id, ...patch, state, logLines });
 			this.#nodeOrder.push(id);
 		}
 	}
+}
+
+// ── Log noise filter ────────────────────────────────────────
+
+/** Patterns for lines that should NOT be captured as node log output. */
+const LOG_NOISE_PATTERNS = [
+	// JSON structured log lines (pino format — handled by tryParseDagEvent)
+	/^\{.*\}$/,
+	// Bracket-prefixed log levels
+	/^\[(?:INFO|WARN|ERR|DBG|LOG|EVT|INF|WRN)\]\s/,
+	// Archon internal prefixes
+	/^\[archon\]\s/,
+	/^\[dotenv@\]/,
+	/^\[(?:scout|planner|worker|reviewer|implementer|classifier|supervisor|task-merger|task-reviewer|task-worker)\]\s*/,
+	// Workflow lifecycle status lines
+	/^Running workflow:/i,
+	/^Working directory:/i,
+	/^Dispatching workflow:/i,
+	/^🚀\s*Starting workflow:/,
+	/^▶️\s*Resuming workflow/,
+	/^❌\s*DAG workflow/,
+	/^Workflow completed successfully\.$/,
+	// Tool warning lines
+	/^⚠️\s*Tool\s/,
+];
+
+/**
+ * Check if a line is internal Archon noise that should not appear
+ * in the node log inspector. Keeps AI responses, bash output,
+ * error messages, and other meaningful text.
+ */
+function isLogNoise(line: string): boolean {
+	return LOG_NOISE_PATTERNS.some((re) => re.test(line));
 }

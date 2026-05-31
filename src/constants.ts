@@ -16,6 +16,8 @@ export const DEFAULT_ARCHON_ENDPOINTS: ArchonEndpointConfig = {
 export const STATUS_KEY_RUNNING = "archon_running";
 export const EXEC_TIMEOUT_MS = 15 * 60 * 1000;
 export const PROGRESS_UPDATE_MS = 1200;
+/** Max log lines buffered per DAG node for the log inspector overlay */
+export const MAX_NODE_LOG_LINES = 200;
 export const RUNTIME_HEALTH_TIMEOUT_MS = 5000;
 export const RUNTIME_START_TIMEOUT_MS = 15000;
 export const RUNTIME_STOP_TIMEOUT_MS = 20000;

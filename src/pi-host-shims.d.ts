@@ -125,27 +125,27 @@ declare module "@mariozechner/pi-tui" {
 	}
 	export function truncateToWidth(value: string, width: number): string;
 	export function visibleWidth(value: string): number;
-export type KeyId = string;
-export function matchesKey(data: string, keyId: KeyId): boolean;
-export const Key: {
-	escape: KeyId;
-	enter: KeyId;
-	tab: KeyId;
-	space: KeyId;
-	backspace: KeyId;
-	up: KeyId;
-	down: KeyId;
-	left: KeyId;
-	right: KeyId;
-	pageUp: KeyId;
-	pageDown: KeyId;
-	home: KeyId;
-	end: KeyId;
-	delete: KeyId;
-	ctrl<K extends string>(key: K): `ctrl+${K}`;
-	shift<K extends string>(key: K): `shift+${K}`;
-	alt<K extends string>(key: K): `alt+${K}`;
-};
+	export type KeyId = string;
+	export function matchesKey(data: string, keyId: KeyId): boolean;
+	export const Key: {
+		escape: KeyId;
+		enter: KeyId;
+		tab: KeyId;
+		space: KeyId;
+		backspace: KeyId;
+		up: KeyId;
+		down: KeyId;
+		left: KeyId;
+		right: KeyId;
+		pageUp: KeyId;
+		pageDown: KeyId;
+		home: KeyId;
+		end: KeyId;
+		delete: KeyId;
+		ctrl<K extends string>(key: K): `ctrl+${K}`;
+		shift<K extends string>(key: K): `shift+${K}`;
+		alt<K extends string>(key: K): `alt+${K}`;
+	};
 	export function wrapTextWithAnsi(text: string, width: number): string[];
 	export interface SelectItem {
 		value: string;
@@ -159,7 +159,7 @@ export const Key: {
 		scrollInfo?: (text: string) => string;
 		noMatch?: (text: string) => string;
 	}
-export class SelectList {
+	export class SelectList {
 		constructor(
 			items: SelectItem[],
 			maxHeight: number,
@@ -173,7 +173,7 @@ export class SelectList {
 		setFilter(filter: string): void;
 		handleInput(data: string): void;
 		render(width: number): string[];
-}
+	}
 	export class DynamicBorder {
 		constructor(borderFn: (s: string) => string);
 	}
