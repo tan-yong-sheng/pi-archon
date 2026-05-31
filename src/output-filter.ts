@@ -218,6 +218,29 @@ const NOISE_PATTERNS = [
 ];
 
 /** Full cleaning pipeline: normalize newlines → filter lines → preserve all sections */
+/**
+ * Remove consecutive duplicate paragraphs from Archon output.
+ * Archon CLI sometimes outputs the AI response text twice:
+ * once during node execution and once as part of the final summary.
+ * This function detects and removes the trailing duplicate.
+ */
+function deduplicateConsecutiveParagraphs(text: string): string {
+	const paragraphs = text.split(/\n\n+/);
+	if (paragraphs.length < 2) return text;
+	// Check if the last non-empty paragraph duplicates an earlier one
+	for (let i = paragraphs.length - 1; i >= 1; i--) {
+		const tail = paragraphs[i].trim();
+		if (!tail) continue;
+		for (let j = 0; j < i; j++) {
+			if (paragraphs[j].trim() === tail) {
+				// Found a duplicate — remove it and everything after
+				return paragraphs.slice(0, i).join("\n\n");
+			}
+		}
+	}
+	return text;
+}
+
 export function cleanOutput(text: string): string {
 	const lines = (text || "").replace(/\r\n?/g, "\n").split("\n");
 
@@ -235,13 +258,15 @@ export function cleanOutput(text: string): string {
 	}
 
 	if (startAt < 0) {
-		return lines
-			.filter((l) => !isNoiseLine(l))
-			.map(parseLine)
-			.filter((e) => e.text.trim())
-			.map((e) => e.text)
-			.join("\n")
-			.trim();
+		return deduplicateConsecutiveParagraphs(
+			lines
+				.filter((l) => !isNoiseLine(l))
+				.map(parseLine)
+				.filter((e) => e.text.trim())
+				.map((e) => e.text)
+				.join("\n")
+			.trim()
+		);
 	}
 
 	// Find the end of the last section to trim trailing summaries/logs
@@ -301,7 +326,7 @@ export function cleanOutput(text: string): string {
 		}
 	}
 
-	return unwrapped.join("\n").trim();
+	return deduplicateConsecutiveParagraphs(unwrapped.join("\n").trim());
 }
 
 // ════════════════════════════════════════════════════════════════
