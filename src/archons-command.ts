@@ -255,6 +255,10 @@ class ArchonsDashboard implements Component {
 				if (entry) {
 					this.list = this.buildRunDetailList(this.selectedRunId);
 				}
+			} else if (this.level === "node-detail" && this.selectedRunId && this.selectedNodeId) {
+				// Refresh node detail to pick up new log lines from tracker
+				this.activeRuns = getActiveRuns();
+				this.list = this.buildNodeDetailList(this.selectedNodeId);
 			}
 			// Restore cursor position after rebuild
 			if (prevIndex > 0) {
@@ -833,6 +837,37 @@ class ArchonsDashboard implements Component {
 				items.push({
 					value: `iter:${iter.iteration}`,
 					label: `${th.fg(iterColor, `    ${iterIcon}`)} #${iter.iteration}${th.fg("dim", dur)}${th.fg("dim", err)}`,
+					description: "",
+				});
+			}
+		}
+
+		// Log lines from tracker (active runs only)
+		const logLines = node?.logLines ?? [];
+		if (logLines.length > 0) {
+			items.push({
+				value: "__section_logs__",
+				label: th.fg("accent", ` Logs (${logLines.length} lines)`),
+				description: "",
+			});
+			// Show last 20 log lines (most recent at bottom)
+			const showLines = logLines.slice(-20);
+			const startIdx = logLines.length - showLines.length;
+			for (let i = 0; i < showLines.length; i++) {
+				const lineNum = startIdx + i + 1;
+				const lineText = showLines[i].length > 70
+					? showLines[i].slice(0, 67) + "…"
+					: showLines[i];
+				items.push({
+					value: `log:${lineNum}`,
+					label: th.fg("dim", ` ${String(lineNum).padStart(3)} │ ${lineText}`),
+					description: "",
+				});
+			}
+			if (logLines.length > 20) {
+				items.push({
+					value: "__logs_more__",
+					label: th.fg("dim", `     … ${logLines.length - 20} earlier lines`),
 					description: "",
 				});
 			}
