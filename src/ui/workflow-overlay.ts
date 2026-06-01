@@ -76,13 +76,15 @@ type OverlayView = "progress" | "logs";
 
 // ── Public config ────────────────────────────────────────────
 export interface WorkflowOverlayOptions {
-	workflowName: string;
-	queryPreview: string;
-	dagTracker: DagProgressTracker;
-	onCancel?: () => void;
-	/** Called when overlay wants to resize */
-	onResize?: (handle: OverlayHandle, width: number) => void;
-	overlayHandle?: OverlayHandle;
+workflowName: string;
+queryPreview: string;
+dagTracker: DagProgressTracker;
+onCancel?: () => void;
+/** Called when the user presses 'a' while the workflow is paused at an approval gate */
+onApprove?: () => void;
+/** Called when overlay wants to resize */
+onResize?: (handle: OverlayHandle, width: number) => void;
+overlayHandle?: OverlayHandle;
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -91,6 +93,7 @@ export class WorkflowOverlay implements Component {
 	private readonly queryPreview: string;
 	private readonly tracker: DagProgressTracker;
 	private readonly onCancel?: () => void;
+	private readonly onApprove?: () => void;
 	private theme: Theme;
 	private startedAt: number;
 	private _expanded = false;
@@ -113,6 +116,7 @@ export class WorkflowOverlay implements Component {
 		this.queryPreview = opts.queryPreview;
 		this.tracker = opts.dagTracker;
 		this.onCancel = opts.onCancel;
+		this.onApprove = opts.onApprove;
 		this.theme = theme;
 		this.startedAt = Date.now();
 	}
@@ -289,13 +293,18 @@ export class WorkflowOverlay implements Component {
 		const scrollHint = nodes.length > maxNodeVisible ? " · ↑/↓ nodes" : "";
 		const enterHint = nodes.length > 0 ? " · Enter=logs" : "";
 		const tabHint = " · Tab=scroll";
+
+		// When paused at an approval gate, show an approve keybinding hint
+		const isPaused = !!tracker.approvalPendingNodeId;
+		const approveHint = isPaused ? " · a=approve" : "";
+
 		const footerHint = tracker.workflowDone
 			? tracker.workflowError
 				? th.fg("error", " failed ")
 				: th.fg("success", " complete ")
 			: th.fg(
 					"dim",
-					` Esc=cancel · e=expand${scrollHint}${enterHint}${tabHint} `,
+					` Esc=cancel · e=expand${approveHint}${scrollHint}${enterHint}${tabHint} `,
 				);
 		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
@@ -862,6 +871,12 @@ export class WorkflowOverlay implements Component {
 		// ESC = cancel
 		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
 			this.onCancel?.();
+			return true;
+		}
+
+		// 'a' = approve (only when paused at an approval gate)
+		if (data === "a" && this.tracker.approvalPendingNodeId) {
+			this.onApprove?.();
 			return true;
 		}
 

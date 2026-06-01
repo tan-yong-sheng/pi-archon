@@ -1,0 +1,53 @@
+name: archon-demo-approval
+description: >
+  Demo workflow with an approval gate. Gathers system info via a bash node,
+  pauses for human approval to review it, then has an AI node summarise it.
+  Use this to test and demonstrate approval-gate behaviour in pi-archon.
+
+interactive: true
+
+nodes:
+  - id: gather-info
+    bash: |
+      echo "=== System Info ==="
+      echo "host: $(hostname 2>/dev/null || echo 'unknown')"
+      echo "user: $(whoami 2>/dev/null || echo 'unknown')"
+      echo "cwd:  $(pwd)"
+      echo "date: $(date -Iseconds)"
+      echo ""
+      echo "=== Git Status ==="
+      echo "branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'not a repo')"
+      echo "commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'n/a')"
+      echo ""
+      echo "=== Project ==="
+      echo "ts-files: $(find . -name '*.ts' -not -path './node_modules/*' 2>/dev/null | wc -l)"
+      echo "yaml-files: $(find . -name '*.yaml' -not -path './node_modules/*' 2>/dev/null | wc -l)"
+      echo "workflows: $(ls .archon/workflows/*.yaml 2>/dev/null | wc -l)"
+    timeout: 10000
+
+  - id: review-gate
+    approval:
+      message: |
+        The gather-info node has collected system and project details above.
+        Please review and approve to proceed with the AI summary, or reject
+        to stop the workflow.
+      capture_response: true
+      on_reject:
+        prompt: |
+          The user rejected the gathered info. Revise and summarise
+          what we know so far in a friendly way, explaining why the
+          workflow was stopped. User feedback: $REJECTION_REASON
+        max_attempts: 3
+    depends_on: [gather-info]
+
+  - id: summarise
+    prompt: |
+      The user approved the workflow. Write a friendly one-paragraph
+      summary of the project info below. Keep it under 100 words.
+
+      Info gathered:
+      $gather-info.output
+
+      User comment (if any):
+      $review-gate.output
+    depends_on: [review-gate]

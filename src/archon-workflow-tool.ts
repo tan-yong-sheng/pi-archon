@@ -8,6 +8,7 @@
  *   - cancel:  Cancel a running workflow
  *   - resume:  Resume a failed or paused workflow run
  *   - approve: Approve a paused workflow at an approval gate
+ *   - info:    Show detailed YAML definition of a specific workflow
  *
  * The AI agent uses this tool to:
  * 1. Discover available workflows (list)
@@ -16,6 +17,7 @@
  * 4. Cancel workflows when needed (cancel)
  * 5. Resume failed/paused workflows (resume)
  * 6. Approve at approval gates to continue execution (approve)
+ * 7. Inspect a specific workflow's full definition and nodes (info)
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -39,6 +41,7 @@ import {
 	approveWorkflowBackground,
 	cancelRun,
 	getActiveRuns,
+	findPausedRun,
 } from "./workflow-background";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
 import { listWorkflowsWithDetails, getRunDetail } from "./archon-api";
@@ -60,48 +63,46 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			"structured output (output_format), loop iteration, approval gates, and parallel fan-out.",
 		promptSnippet: "Run or manage Archon workflows",
 		promptGuidelines: [
-			"To DISCOVER available workflows with descriptions, use get_workflow_info(action='list') instead — it shows workflow descriptions grouped by source (project/global/bundled).",
-			"To INSPECT a specific workflow's node DAG and full definition, use get_workflow_info(action='info', workflow='name').",
 			"Use archon_workflow with action='run' to launch a workflow. Provide the workflow name and a query string. The agent turn ends immediately after launching (terminate: true) — the workflow runs in the background and its result is automatically injected as a user message when complete.",
+			"Use archon_workflow with action='list' to discover available workflows with descriptions, grouped by source (project/global/bundled).",
+			"Use archon_workflow with action='info' to INSPECT a specific workflow's full YAML definition, including all nodes, triggers, providers, and configuration.",
 			"After a workflow launch, the result arrives as a user message — process it, extract key information, and present it to the user. Do NOT ignore completion messages.",
 			"Use archon_workflow with action='status' to check on running or recently completed workflows. Returns node states, durations, and errors.",
 			"Use archon_workflow with action='cancel' to stop a running workflow by run ID.",
 			"Use archon_workflow with action='resume' to resume a failed or paused workflow run. Provide the run ID.",
 			"Use archon_workflow with action='approve' to approve a paused workflow at an approval gate. Provide the run ID and optionally a comment. The workflow auto-resumes after approval and its output is delivered as a user message.",
+			"IMPORTANT — APPROVAL GATES REQUIRE HUMAN-IN-LOOP: When a workflow pauses at an approval gate, the pause notification arrives as a user message. You MUST ask the user whether they want to approve or reject — do NOT auto-approve or auto-cancel. Only execute approve after the user explicitly says yes.",
 			"When the user asks to create a new workflow, author the YAML in .archon/workflows/ first, then use archon_workflow run to launch it.",
 			"Archon workflows support conditional execution via 'when' expressions, 'trigger_rule' join semantics, structured output via 'output_format' (JSON Schema), approval gates, and loop iteration until completion.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(
-				["run", "list", "status", "cancel", "resume", "approve"] as const,
+				[
+					"run",
+					"list",
+					"status",
+					"cancel",
+					"resume",
+					"approve",
+					"info",
+				] as const,
 				{
 					description:
 						"Action: 'run' to launch, 'list' to discover, 'status' to check, 'cancel' to stop, " +
-						"'resume' to resume a failed/paused run, 'approve' to approve at an approval gate",
+						"'resume' to resume a failed/paused run, 'approve' to approve at an approval gate " +
+						"(human-in-loop — must ask user first)",
 				},
-			),
-			workflow: Type.Optional(
-				Type.String({
-					description:
-						"Workflow name (for 'run' action). Must match a .archon/workflows/*.yaml file.",
-				}),
-			),
-			query: Type.Optional(
-				Type.String({
-					description:
-						"Query/prompt for the workflow run (for 'run' action). Passed as $ARGUMENTS to the workflow.",
-				}),
-			),
-			comment: Type.Optional(
-				Type.String({
-					description:
-						"Optional comment for 'approve' action (passed as comment to the approval gate).",
-				}),
 			),
 			runId: Type.Optional(
 				Type.String({
 					description:
 						"Run ID to check, cancel, resume, or approve (for 'status', 'cancel', 'resume', and 'approve' actions).",
+				}),
+			),
+			workflow: Type.Optional(
+				Type.String({
+					description:
+						"Workflow name for 'run' and 'info' actions. Must match a .archon/workflows/*.yaml file.",
 				}),
 			),
 		}),
@@ -110,6 +111,8 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			const cwd = ctx?.cwd || process.cwd();
 
 			switch (action) {
+				case "info":
+					return await handleInfo(workflow, cwd);
 				case "run":
 					return await handleRun(pi, workflow, query, cwd, onUpdate, ctx);
 				case "list":
@@ -132,6 +135,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			const actionLabels: Record<string, string> = {
 				run: "▶ Run",
 				list: "☰ List",
+				info: "ℹ Info",
 				status: "◎ Status",
 				cancel: "✕ Cancel",
 				resume: "↻ Resume",
@@ -240,6 +244,15 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 							: undefined,
 					].filter(Boolean) as string[];
 				}
+			} else if (action === "info") {
+				const source = String(details?.source ?? "");
+				lines = [
+					theme.fg(
+						"accent",
+						`◆ archon ▸ info: ${String(details?.workflow ?? "")}`,
+					),
+					theme.fg("dim", `  source: ${source}`),
+				];
 			} else {
 				// Fallback
 				lines = [theme.fg("dim", contentText.slice(0, 200))];
@@ -372,7 +385,7 @@ async function handleList(cwd?: string): Promise<{
 }> {
 	const projectCwd = cwd || process.cwd();
 
-	// Try REST API first (rich data with descriptions)
+	// List workflows with descriptions via CLI
 	const apiWorkflows = await listWorkflowsWithDetails(projectCwd);
 
 	if (apiWorkflows && apiWorkflows.length > 0) {
@@ -419,7 +432,7 @@ async function handleList(cwd?: string): Promise<{
 	const lines = [
 		`## Available Workflows (${names.length})`,
 		"",
-		"_Descriptions unavailable — Archon server not running. Start with `archon serve` for rich workflow info._",
+		"_Descriptions unavailable — Archon CLI could not retrieve workflow details._",
 		"",
 	];
 	if (names.length === 0) {
@@ -443,6 +456,71 @@ async function handleList(cwd?: string): Promise<{
 			})),
 		},
 	};
+}
+
+/**
+ * Show full YAML definition of a specific workflow.
+ */
+async function handleInfo(
+	workflow?: string,
+	cwd?: string,
+): Promise<{
+	content: { type: string; text: string }[];
+	details: Record<string, unknown>;
+}> {
+	if (!workflow) {
+		throw new Error("'workflow' parameter is required for action='info'");
+	}
+
+	const projectCwd = cwd || process.cwd();
+
+	// Try project-local YAML first
+	const projectFile = `${projectCwd}/.archon/workflows/${workflow}.yaml`;
+	const fs = require("node:fs");
+	if (fs.existsSync(projectFile)) {
+		const raw = fs.readFileSync(projectFile, "utf-8");
+
+		const lines: string[] = [
+			`## Workflow: ${workflow}`,
+			"",
+			`**Source:** project (\`.archon/workflows/${workflow}.yaml\`)`,
+			"",
+			"```yaml",
+			raw.trim(),
+			"```",
+		];
+
+		return {
+			content: [{ type: "text", text: lines.join("\n") }],
+			details: { action: "info", workflow, source: "project" },
+		};
+	}
+
+	// Try fetching from CLI list output for bundled workflows
+	const workflows = await listWorkflowsWithDetails(projectCwd);
+	const wf = workflows?.find((w) => w.name === workflow);
+	if (wf) {
+		const lines = [
+			`## Workflow: ${workflow}`,
+			"",
+			`**Source:** bundled`,
+			"",
+			`**Description:** ${wf.description.split("\n")[0]}`,
+			"",
+			`**Provider:** ${wf.provider ?? "default"}  **Model:** ${wf.model ?? "default"}`,
+			"",
+			"Node details are embedded in the Archon binary and cannot be extracted.",
+			"Run the workflow to see its execution graph, or check the marketplace.",
+		];
+		return {
+			content: [{ type: "text", text: lines.join("\n") }],
+			details: { action: "info", workflow, source: "bundled" },
+		};
+	}
+
+	throw new Error(
+		`Workflow "${workflow}" not found. Use action='list' to discover available workflows.`,
+	);
 }
 
 async function handleStatus(
@@ -659,10 +737,19 @@ async function handleResume(
 	const projectCwd = cwd || process.cwd();
 
 	// Try to resolve the workflow name from active runs first
-	const activeEntry = getActiveRuns().get(runId);
+	let activeEntry = getActiveRuns().get(runId);
 	let workflowName = activeEntry?.workflowName;
 
-	// If not in active runs, try the API
+	// If not in active runs, check if this is an Archon UUID from a paused workflow
+	if (!workflowName) {
+		const pausedEntry = findPausedRun(runId);
+		if (pausedEntry) {
+			activeEntry = pausedEntry;
+			workflowName = pausedEntry.workflowName;
+		}
+	}
+
+	// If still not found, try querying the DB
 	if (!workflowName) {
 		try {
 			const detail = await getRunDetail(runId);
@@ -674,8 +761,11 @@ async function handleResume(
 		}
 	}
 
-	// Fall back to synchronous CLI if no UI, or launch in background
+	// Launch in background if UI available
 	if (ctx?.hasUI && ctx.ui && workflowName) {
+		// Dismiss paused-run overlay if we found one (replaced by new resume overlay)
+		activeEntry?.overlayHandle?.hide();
+
 		const localRunId = resumeWorkflowBackground(
 			pi,
 			runId,
@@ -703,12 +793,12 @@ async function handleResume(
 		}
 	}
 
-	// Fallback: synchronous CLI execution
+	// Fallback: synchronous CLI execution (archon workflow run --resume)
 	const { runArchonCommand } = await import("./archon-exec");
 	const startedAt = Date.now();
 	const result = await runArchonCommand(
 		pi,
-		["workflow", "resume", runId],
+		["workflow", "run", workflowName ?? "", "--resume", "--no-worktree"],
 		projectCwd,
 	);
 	const durationMs = Date.now() - startedAt;
@@ -762,10 +852,19 @@ async function handleApprove(
 	const projectCwd = cwd || process.cwd();
 
 	// Try to resolve the workflow name from active runs first
-	const activeEntry = getActiveRuns().get(runId);
+	let activeEntry = getActiveRuns().get(runId);
 	let workflowName = activeEntry?.workflowName;
 
-	// If not in active runs, try the API
+	// If not in active runs, check if this is an Archon UUID from a paused workflow
+	if (!workflowName) {
+		const pausedEntry = findPausedRun(runId);
+		if (pausedEntry) {
+			activeEntry = pausedEntry;
+			workflowName = pausedEntry.workflowName;
+		}
+	}
+
+	// If still not found, try querying the DB
 	if (!workflowName) {
 		try {
 			const detail = await getRunDetail(runId);
@@ -779,7 +878,10 @@ async function handleApprove(
 
 	// Launch in background if UI available
 	if (ctx?.hasUI && ctx.ui && workflowName) {
-		const localRunId = approveWorkflowBackground(
+		// Dismiss paused-run overlay if we found one (replaced by new approve overlay)
+		activeEntry?.overlayHandle?.hide();
+
+		const localRunId = await approveWorkflowBackground(
 			pi,
 			runId,
 			workflowName,
@@ -807,13 +909,17 @@ async function handleApprove(
 		}
 	}
 
-	// Fallback: synchronous CLI execution
+	// Fallback: synchronous CLI execution (no UI)
 	const { runArchonCommand } = await import("./archon-exec");
 	const startedAt = Date.now();
-	const approveCliArgs = comment
-		? ["workflow", "approve", runId, comment]
-		: ["workflow", "approve", runId];
-	const result = await runArchonCommand(pi, approveCliArgs, projectCwd);
+
+	// Use archon workflow approve <runId> [comment] directly.
+	// The CLI handles both approval and execution in the same process.
+	const cliArgs: string[] = ["workflow", "approve", runId];
+	if (comment) {
+		cliArgs.push(comment);
+	}
+	const result = await runArchonCommand(pi, cliArgs, projectCwd);
 	const durationMs = Date.now() - startedAt;
 	const success = result.exitCode === 0;
 

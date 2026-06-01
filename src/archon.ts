@@ -28,31 +28,14 @@ export type {
 export { ProgressBox } from "./ui/progress-box";
 export { DagProgressTracker } from "./dag-tracker";
 
-// ── Archon API client ────────────────────────────────────────
+// ── Archon CLI + DB data access ─────────────────────────────────
 export {
-	queryNodeOutputs,
 	getRunDetail,
-	extractNodeOutputs,
 	findLatestRunIdForWorkflow,
-	isArchonServerRunning,
-	type NodeOutputInfo,
+	listWorkflowsWithDetails,
 	type ArchonApiRunDetail,
 	type ArchonApiRunEvent,
 } from "./archon-api";
-
-// ── SSE real-time event stream ────────────────────────────────
-export {
-	ArchonSSEClient,
-	mapSSEToDagEvent,
-	getSharedSSEClient,
-	disconnectSharedSSE,
-	type ArchonSSEEvent,
-	type SSEWorkflowStatusEvent,
-	type SSEDagNodeEvent,
-	type SSEToolActivityEvent,
-	type SSEWorkflowStepEvent,
-	type SSEWorkflowArtifactEvent,
-} from "./archon-sse";
 
 // ── Artifact & history queries ───────────────────────────────
 export {

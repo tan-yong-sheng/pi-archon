@@ -4,6 +4,7 @@
  Provides the core workflow control functions used by both the /archons
  * dashboard and the archon_workflow tool.
  */
+import { runArchonCommand } from "./archon-exec";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -11,7 +12,6 @@ import type {
 import * as fs from "node:fs";
 import { ARCHON_ROOT } from "./constants";
 import { safeCode } from "./output-filter";
-import { runArchonCommand } from "./archon-exec";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -170,15 +170,24 @@ export async function handleArchonStatusCommand(
 export async function cancelArchonWorkflowRun(
 	pi: ExtensionAPI,
 	runId: string,
-	projectRoot: string,
+	projectCwd: string,
 ): Promise<void> {
-	const run = await runArchonCommand(
-		pi,
-		["workflow", "abandon", runId],
-		projectRoot,
-	);
-	if (run.exitCode !== 0)
-		throw new Error(run.stderr || run.stdout || `exit ${run.exitCode}`);
+	try {
+		const result = await runArchonCommand(
+			pi,
+			["workflow", "abandon", runId],
+			projectCwd,
+		);
+		if (result.exitCode !== 0) {
+			throw new Error(
+				result.stderr || result.stdout || `exit ${result.exitCode}`,
+			);
+		}
+	} catch (error) {
+		throw new Error(
+			`Failed to cancel run ${runId}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 }
 
 /** Find the most recent running workflow run ID for a given workflow name. */

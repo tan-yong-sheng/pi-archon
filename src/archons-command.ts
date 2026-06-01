@@ -20,7 +20,11 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI, Theme } from "@mariozechner/pi-tui";
-import { SelectList, type SelectItem, truncateToWidth } from "@mariozechner/pi-tui";
+import {
+	SelectList,
+	type SelectItem,
+	truncateToWidth,
+} from "@mariozechner/pi-tui";
 import {
 	getActiveRuns,
 	cancelRun,
@@ -38,7 +42,7 @@ import { handleArchonStatusCommand } from "./workflow-ops";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
 import { runWorkflowBackground } from "./workflow-background";
-import { queryNodeOutputs } from "./archon-api";
+import { getRunDetail } from "./archon-api";
 
 // ── Dashboard view levels ────────────────────────────────────
 type ViewLevel = "run-list" | "run-detail" | "node-detail";
@@ -850,13 +854,19 @@ class ArchonsDashboard implements Component {
 		if (node?.streamingText) {
 			items.push({
 				value: "__section_streaming__",
-				label: th.fg("accent", ` Streaming Text (${node.streamingText.length} chars)`),
+				label: th.fg(
+					"accent",
+					` Streaming Text (${node.streamingText.length} chars)`,
+				),
 				description: "",
 			});
 			const streamLines = node.streamingText.split("\n");
 			const showLines = streamLines.slice(-10);
 			for (let i = 0; i < showLines.length; i++) {
-				const lineText = showLines[i].length > 70 ? showLines[i].slice(0, 67) + "…" : showLines[i];
+				const lineText =
+					showLines[i].length > 70
+						? showLines[i].slice(0, 67) + "…"
+						: showLines[i];
 				items.push({
 					value: `stream:${i}`,
 					label: `  ${lineText}`,
@@ -883,12 +893,16 @@ class ArchonsDashboard implements Component {
 				const tc = node.toolCalls[ti];
 				const isCompleted = tc.output !== undefined;
 				if (isCompleted) {
-					const durStr = tc.durationMs != null
-						? (tc.durationMs > 1000 ? `${Math.round(tc.durationMs / 100) / 10}s` : `${tc.durationMs}ms`)
-						: "";
-					const outPreview = tc.output && tc.output.length > 50
-						? `${tc.output.slice(0, 50)}…`
-						: (tc.output ?? "");
+					const durStr =
+						tc.durationMs != null
+							? tc.durationMs > 1000
+								? `${Math.round(tc.durationMs / 100) / 10}s`
+								: `${tc.durationMs}ms`
+							: "";
+					const outPreview =
+						tc.output && tc.output.length > 50
+							? `${tc.output.slice(0, 50)}…`
+							: (tc.output ?? "");
 					items.push({
 						value: `tool:${ti}`,
 						label: `${th.fg("success", "✓")} ${tc.name}${th.fg("dim", ` (${durStr})`)}`,
@@ -993,17 +1007,21 @@ class ArchonsDashboard implements Component {
 		return list;
 	}
 
-	// ── API enrichment ─────────────────────────────────────────
+	// ── Enrich node detail with outputs from DB ──────────────
 	private async fetchApiNodeOutputs(
 		runId: string | null,
 		_nodeId: string,
 	): Promise<void> {
 		if (!runId) return;
 		try {
-			const outputs = await queryNodeOutputs(runId);
-			for (const nodeInfo of outputs) {
-				if (nodeInfo.output) {
-					this.apiNodeOutputs.set(nodeInfo.nodeId, nodeInfo.output);
+			const detail = await getRunDetail(runId);
+			if (!detail) return;
+			for (const ev of detail.events) {
+				if (ev.event_type === "node_completed" && ev.step_name) {
+					const output = ev.data.node_output as string | undefined;
+					if (output) {
+						this.apiNodeOutputs.set(ev.step_name, output);
+					}
 				}
 			}
 			// Rebuild list if we're still on node-detail level

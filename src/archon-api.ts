@@ -1,71 +1,26 @@
 /**
- * Archon REST API client — queries the Archon Web server for
- * workflow run details, node output, and conversation messages.
+ * Archon CLI-wrapped data access — queries workflow and run metadata
+ * using the Archon CLI and SQLite DB instead of the REST API.
  *
- * The Archon Web server (localhost:3090) exposes a REST API that
- * provides much richer observability data than the CLI's stderr:
- *   - Full node_output for each completed node
- *   - Tool call metadata (name, input, output, duration)
- *   - Conversation messages with structured metadata
- *   - Workflow run status with node counts and cost
- *
- * This module is used by the WorkflowOverlay and /archons dashboard
- * to show node logs/output that the CLI doesn't render to stderr.
- *
- * Fallback: if the server isn't running, gracefully returns empty data.
+ * No dependency on `archon serve` — everything works via CLI subprocess.
+ * The DB path is used directly for fast lookups (read-only SQL queries).
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ARCHON_DB_PATH } from "./constants";
+
+const execFileAsync = promisify(execFile);
 
 // ── Types ────────────────────────────────────────────────────
 
-export interface ArchonApiRunEvent {
-	id: string;
-	workflow_run_id: string;
-	event_type: string;
-	step_index: number | null;
-	step_name: string | null;
-	data: Record<string, unknown>;
-	created_at: string;
-}
-
-export interface ArchonApiRunDetail {
-	run: {
-		id: string;
-		conversation_id: string;
-		workflow_name: string;
-		status: string;
-		working_path: string | null;
-		started_at: string;
-		completed_at: string | null;
-		metadata: {
-			node_counts?: {
-				completed: number;
-				failed: number;
-				skipped: number;
-				total: number;
-			};
-			total_cost_usd?: number;
-		};
-		/** Platform conversation ID (e.g. 'cli-1780306933204-bvijtl')
-		 *  Used for SSE streaming of AI text + tool calls. */
-		conversation_platform_id: string | null;
-		/** Worker platform conversation ID (for Web runs with separate worker).
-		 *  CLI runs have this as null — the parent conversation IS the worker. */
-		worker_platform_id?: string | null;
-		/** Parent platform conversation ID (the conversation that dispatched this workflow). */
-		parent_platform_id?: string | null;
-	};
-	events: ArchonApiRunEvent[];
-}
-
-export interface ArchonApiMessage {
-	id: string;
-	conversation_id: string;
-	role: string;
-	content: string;
-	metadata: string;
-	created_at: string;
+export interface WorkflowInfo {
+	name: string;
+	description: string;
+	source: "project" | "bundled" | "global";
+	provider?: string;
+	model?: string;
+	nodeCount?: number;
 }
 
 export interface NodeOutputInfo {
@@ -80,277 +35,281 @@ export interface NodeOutputInfo {
 	error?: string;
 }
 
-// ── Config ───────────────────────────────────────────────────
+// ── Internal helpers ─────────────────────────────────────────
 
-const ARCHON_API_BASE = `http://127.0.0.1:3090`;
-const API_TIMEOUT_MS = 5000;
-
-// ── Internal fetch helper ────────────────────────────────────
-
-async function apiFetch<T>(path: string): Promise<T | undefined> {
+function resolveArchonBin(): { cmd: string; args: string[] } {
+	const archonRoot = process.env.ARCHON_ROOT || "/opt/archon";
 	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-		const res = await fetch(`${ARCHON_API_BASE}${path}`, {
-			signal: controller.signal,
+		const fs = require("node:fs");
+		if (fs.existsSync(`${archonRoot}/package.json`)) {
+			return { cmd: "bun", args: ["run", "cli"] };
+		}
+	} catch {
+		/* ignore */
+	}
+	return { cmd: "archon", args: [] };
+}
+
+/**
+ * Strip JSON pino logger lines from CLI output before parsing.
+ * The Archon CLI mixes pino JSON log lines with actual JSON output.
+ */
+function stripPinoLines(text: string): string {
+	return text
+		.split(/\n/)
+		.filter((line) => {
+			const trimmed = line.trim();
+			if (!trimmed) return false;
+			if (trimmed.startsWith("{")) {
+				try {
+					const parsed = JSON.parse(trimmed);
+					return !(parsed && typeof parsed.level === "number" && parsed.msg);
+				} catch {
+					return true;
+				}
+			}
+			return true;
+		})
+		.join("\n");
+}
+
+async function runArchonCli(
+	args: string[],
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const { cmd, args: baseArgs } = resolveArchonBin();
+	const fullArgs = [...baseArgs, ...args];
+
+	try {
+		const { stdout, stderr } = await execFileAsync(cmd, fullArgs, {
+			timeout: 30000,
+			encoding: "utf-8",
 		});
-		clearTimeout(timer);
-		if (!res.ok) return undefined;
-		return (await res.json()) as T;
+		return { stdout, stderr, exitCode: 0 };
+	} catch (error: any) {
+		if (error.stdout !== undefined) {
+			return {
+				stdout: error.stdout ?? "",
+				stderr: error.stderr ?? "",
+				exitCode: error.code ?? 1,
+			};
+		}
+		throw error;
+	}
+}
+
+// ── Workflow discovery ────────────────────────────────────────
+
+interface CliWorkflowEntry {
+	name: string;
+	description: string;
+	provider?: string;
+	model?: string;
+}
+
+/**
+ * List all available workflows with name + description using `archon workflow list --json`.
+ */
+export async function listWorkflowsWithDetails(
+	projectCwd?: string,
+): Promise<WorkflowInfo[] | undefined> {
+	try {
+		const args = ["workflow", "list", "--json"];
+		if (projectCwd) {
+			args.push("--cwd", projectCwd);
+		}
+		const result = await runArchonCli(args);
+
+		if (result.exitCode !== 0) return undefined;
+
+		const clean = stripPinoLines(result.stdout);
+		const parsed = JSON.parse(clean) as { workflows: CliWorkflowEntry[] };
+		if (!parsed.workflows || !Array.isArray(parsed.workflows)) return undefined;
+
+		// Detect source by checking if the workflow file exists on disk
+		// Project workflows live in .archon/workflows/; bundled/global are from Archon's install.
+		// We can't perfectly distinguish bundled from global without the server,
+		// but we can detect project workflows by file presence.
+		const projectDir = projectCwd
+			? `${projectCwd}/.archon/workflows`
+			: `${process.cwd()}/.archon/workflows`;
+
+		return parsed.workflows.map((entry: CliWorkflowEntry) => {
+			const fs = require("node:fs");
+			const projectFile = `${projectDir}/${entry.name}.yaml`;
+			const source: "project" | "bundled" | "global" = fs.existsSync(
+				projectFile,
+			)
+				? "project"
+				: "bundled";
+			return {
+				name: entry.name,
+				description: entry.description,
+				source,
+				provider: entry.provider,
+				model: entry.model,
+			};
+		});
 	} catch {
 		return undefined;
 	}
 }
 
-// ── Public API ───────────────────────────────────────────────
+// ── Run detail ────────────────────────────────────────────────
+
+export interface ArchonApiRunDetail {
+	run: {
+		id: string;
+		conversation_id: string;
+		workflow_name: string;
+		status: string;
+		working_path: string | null;
+		started_at: string;
+		completed_at: string | null;
+		metadata: Record<string, unknown>;
+		conversation_platform_id: string | null;
+		worker_platform_id?: string | null;
+		parent_platform_id?: string | null;
+	};
+	events: ArchonApiRunEvent[];
+}
+
+export interface ArchonApiRunEvent {
+	id: string;
+	workflow_run_id: string;
+	event_type: string;
+	step_index: number | null;
+	step_name: string | null;
+	data: Record<string, unknown>;
+	created_at: string;
+}
 
 /**
- * Get full run detail from the Archon REST API.
- * Returns undefined if the server is not running or the run doesn't exist.
+ * Get full run detail by querying the SQLite DB directly.
+ * Returns undefined if the DB is unavailable or the run doesn't exist.
  */
 export async function getRunDetail(
 	runId: string,
 ): Promise<ArchonApiRunDetail | undefined> {
-	return apiFetch<ArchonApiRunDetail>(
-		`/api/workflows/runs/${encodeURIComponent(runId)}`,
-	);
-}
+	try {
+		// Query the run record
+		const runCmd = `sqlite3 "${ARCHON_DB_PATH}" "SELECT json_object('id', id, 'conversation_id', conversation_id, 'workflow_name', workflow_name, 'status', status, 'working_path', working_path, 'started_at', started_at, 'completed_at', completed_at, 'metadata', CASE WHEN metadata IS NOT NULL THEN json(metadata) ELSE '{}' END, 'conversation_platform_id', conversation_platform_id, 'worker_platform_id', worker_platform_id, 'parent_platform_id', parent_platform_id) FROM remote_agent_workflow_runs WHERE id = '${runId.replace(/'/g, "''")}' LIMIT 1;" -json`;
+		const { execSync } = await import("child_process");
+		const runResult = execSync(runCmd, {
+			timeout: 3000,
+			encoding: "utf-8",
+		}).trim();
+		if (!runResult) return undefined;
 
-/**
- * Extract node output data from a run detail's events.
- * Each node_completed event carries node_output in its data.
- */
-export function extractNodeOutputs(
-	runDetail: ArchonApiRunDetail,
-): NodeOutputInfo[] {
-	const outputs: NodeOutputInfo[] = [];
-	const events = runDetail.events ?? [];
+		const runRows = JSON.parse(runResult) as Array<{
+			id: string;
+			conversation_id: string;
+			workflow_name: string;
+			status: string;
+			working_path: string | null;
+			started_at: string;
+			completed_at: string | null;
+			metadata: string;
+			conversation_platform_id: string | null;
+			worker_platform_id: string | null;
+			parent_platform_id: string | null;
+		}>;
+		if (!runRows || runRows.length === 0) return undefined;
 
-	// Build a map: nodeId → node_started data (type, provider)
-	const startedData = new Map<string, Record<string, unknown>>();
-	for (const ev of events) {
-		if (ev.event_type === "node_started" && ev.step_name) {
-			startedData.set(ev.step_name, ev.data);
+		const row = runRows[0];
+
+		// Parse metadata JSON
+		let metadata: Record<string, unknown> = {};
+		try {
+			metadata = JSON.parse(row.metadata ?? "{}");
+		} catch {
+			/* empty */
 		}
+
+		// Query events
+		const eventsCmd = `sqlite3 "${ARCHON_DB_PATH}" "SELECT json_object('id', id, 'workflow_run_id', workflow_run_id, 'event_type', event_type, 'step_index', step_index, 'step_name', step_name, 'data', CASE WHEN data IS NOT NULL THEN json(data) ELSE '{}' END, 'created_at', created_at) FROM remote_agent_workflow_events WHERE workflow_run_id = '${runId.replace(/'/g, "''")}' ORDER BY created_at ASC;" -json 2>/dev/null`;
+
+		let events: ArchonApiRunEvent[] = [];
+		try {
+			const eventsResult = execSync(eventsCmd, {
+				timeout: 3000,
+				encoding: "utf-8",
+			}).trim();
+			if (eventsResult) {
+				const eventRows = JSON.parse(eventsResult) as Array<{
+					id: string;
+					workflow_run_id: string;
+					event_type: string;
+					step_index: number | null;
+					step_name: string | null;
+					data: string;
+					created_at: string;
+				}>;
+				if (Array.isArray(eventRows)) {
+					events = eventRows.map((e) => {
+						let eventData: Record<string, unknown> = {};
+						try {
+							eventData = JSON.parse(e.data ?? "{}");
+						} catch {
+							/* empty */
+						}
+						return {
+							id: e.id,
+							workflow_run_id: e.workflow_run_id,
+							event_type: e.event_type,
+							step_index: e.step_index,
+							step_name: e.step_name,
+							data: eventData,
+							created_at: e.created_at,
+						};
+					});
+				}
+			}
+		} catch {
+			/* events are optional */
+		}
+
+		return {
+			run: {
+				id: row.id,
+				conversation_id: row.conversation_id,
+				workflow_name: row.workflow_name,
+				status: row.status,
+				working_path: row.working_path,
+				started_at: row.started_at,
+				completed_at: row.completed_at,
+				metadata,
+				conversation_platform_id: row.conversation_platform_id,
+				worker_platform_id: row.worker_platform_id,
+				parent_platform_id: row.parent_platform_id,
+			},
+			events,
+		};
+	} catch {
+		return undefined;
 	}
-
-	for (const ev of events) {
-		if (ev.event_type === "node_completed" && ev.step_name) {
-			const startedInfo = startedData.get(ev.step_name) ?? {};
-			outputs.push({
-				nodeId: ev.step_name,
-				nodeType: (ev.data.type as string) ?? (startedInfo.type as string),
-				provider: (startedInfo.provider as string) ?? undefined,
-				output: (ev.data.node_output as string) ?? undefined,
-				durationMs: (ev.data.duration_ms as number) ?? undefined,
-				costUsd: (ev.data.cost_usd as number) ?? undefined,
-				stopReason: (ev.data.stop_reason as string) ?? undefined,
-				numTurns: (ev.data.num_turns as number) ?? undefined,
-			});
-		}
-		if (ev.event_type === "node_failed" && ev.step_name) {
-			outputs.push({
-				nodeId: ev.step_name,
-				nodeType: (startedData.get(ev.step_name)?.type as string) ?? undefined,
-				error: (ev.data.error as string) ?? "Node failed",
-			});
-		}
-	}
-
-	return outputs;
 }
 
-/**
- * Get conversation messages from the Archon REST API.
- * Uses the platform conversation ID (e.g., "cli-1780292888619-7083ms").
- */
-export async function getConversationMessages(
-	platformConversationId: string,
-	limit = 50,
-): Promise<ArchonApiMessage[] | undefined> {
-	return apiFetch<ArchonApiMessage[]>(
-		`/api/conversations/${encodeURIComponent(platformConversationId)}/messages?limit=${limit}`,
-	);
-}
+// ── Run ID lookup ─────────────────────────────────────────────
 
 /**
- * Get node outputs for a specific run ID by querying the API.
- * This is the primary method for getting node_output data that
- * the CLI doesn't render to stderr.
- */
-export async function queryNodeOutputs(
-	runId: string,
-): Promise<NodeOutputInfo[]> {
-	const detail = await getRunDetail(runId);
-	if (!detail) return [];
-	return extractNodeOutputs(detail);
-}
-
-/**
- * Find the most recent run ID for a workflow name.
- * Checks DB first (fast), falls back to API if DB unavailable.
+ * Find the most recent run ID for a workflow name by querying the SQLite DB.
  */
 export async function findLatestRunIdForWorkflow(
 	workflowName: string,
 	workingPath?: string,
 ): Promise<string | undefined> {
-	// Try DB first
 	try {
-		const { execSync } = await import("child_process");
 		const dbPath = ARCHON_DB_PATH;
 		const whereClause = workingPath
 			? `workflow_name = '${workflowName.replace(/'/g, "''")}' AND working_path = '${workingPath.replace(/'/g, "''")}'`
 			: `workflow_name = '${workflowName.replace(/'/g, "''")}'`;
 		const cmd = `sqlite3 "${dbPath}" "SELECT id FROM remote_agent_workflow_runs WHERE ${whereClause} ORDER BY started_at DESC LIMIT 1;" -json`;
+		const { execSync } = await import("child_process");
 		const result = execSync(cmd, { timeout: 3000, encoding: "utf-8" });
 		const rows = JSON.parse(result.trim()) as Array<{ id: string }>;
 		if (rows.length > 0) return rows[0].id;
 	} catch {
-		// DB unavailable — fall through to API
+		// DB unavailable
 	}
-
-	// Try API
-	try {
-		const runs = await apiFetch<
-			Array<{ id: string; workflow_name: string; working_path?: string }>
-		>(`/api/dashboard/runs?limit=20`);
-		if (!runs) return undefined;
-		const match = runs.find(
-			(r) =>
-				r.workflow_name === workflowName &&
-				(!workingPath || r.working_path === workingPath),
-		);
-		return match?.id;
-	} catch {
-		return undefined;
-	}
-}
-
-// ── Workflow discovery types ──────────────────────────────────
-
-export interface WorkflowInfo {
-	name: string;
-	description: string;
-	source: "project" | "bundled" | "global";
-	provider?: string;
-	model?: string;
-	nodeCount?: number;
-}
-
-export interface WorkflowDetail extends WorkflowInfo {
-	nodes: WorkflowNodeInfo[];
-	interactive?: boolean;
-	worktree?: { enabled?: boolean };
-}
-
-export interface WorkflowNodeInfo {
-	id: string;
-	type: string;
-	description?: string;
-	dependsOn?: string[];
-	when?: string;
-	triggerRule?: string;
-}
-
-// ── Workflow discovery API ────────────────────────────────────
-
-interface ApiWorkflowEntry {
-	workflow: {
-		name: string;
-		description: string;
-		provider?: string;
-		model?: string;
-		nodes?: Array<{
-			id?: string;
-			type?: string;
-			description?: string;
-			dependsOn?: string[];
-			when?: string;
-			trigger_rule?: string;
-		}>;
-		interactive?: boolean;
-		worktree?: { enabled?: boolean };
-	};
-	source: "project" | "bundled" | "global";
-}
-
-interface ApiWorkflowListResponse {
-	workflows: ApiWorkflowEntry[];
-	errors?: Array<{ filename: string; error: string }>;
-}
-
-interface ApiWorkflowGetResponse {
-	workflow: ApiWorkflowEntry["workflow"];
-	filename: string;
-	source: ApiWorkflowEntry["source"];
-}
-
-/**
- * List all available workflows with name + description from the Archon REST API.
- * Returns undefined if the server is not running.
- */
-export async function listWorkflowsWithDetails(
-	projectCwd?: string,
-): Promise<WorkflowInfo[] | undefined> {
-	const query = projectCwd ? `?cwd=${encodeURIComponent(projectCwd)}` : "";
-	const result = await apiFetch<ApiWorkflowListResponse>(
-		`/api/workflows${query}`,
-	);
-	if (!result) return undefined;
-	if (!Array.isArray(result.workflows)) return undefined;
-
-	return result.workflows.map((entry) => ({
-		name: entry.workflow.name,
-		description: entry.workflow.description,
-		source: entry.source,
-		provider: entry.workflow.provider,
-		model: entry.workflow.model,
-		nodeCount: entry.workflow.nodes?.length,
-	}));
-}
-
-/**
- * Get full details for a specific workflow by name from the Archon REST API.
- * Returns undefined if the server is not running or the workflow doesn't exist.
- */
-export async function getWorkflowInfo(
-	name: string,
-	projectCwd?: string,
-): Promise<WorkflowDetail | undefined> {
-	const query = projectCwd ? `?cwd=${encodeURIComponent(projectCwd)}` : "";
-	const result = await apiFetch<ApiWorkflowGetResponse>(
-		`/api/workflows/${encodeURIComponent(name)}${query}`,
-	);
-	if (!result || !result.workflow) return undefined;
-
-	return {
-		name: result.workflow.name,
-		description: result.workflow.description,
-		source: result.source,
-		provider: result.workflow.provider,
-		model: result.workflow.model,
-		nodeCount: result.workflow.nodes?.length,
-		nodes: (result.workflow.nodes ?? []).map((n) => ({
-			id: n.id ?? "unknown",
-			type: n.type ?? "unknown",
-			description: n.description,
-			dependsOn: n.dependsOn,
-			when: n.when,
-			triggerRule: n.trigger_rule,
-		})),
-		interactive: result.workflow.interactive,
-		worktree: result.workflow.worktree,
-	};
-}
-
-/**
- * Check if the Archon Web server is reachable.
- */
-export async function isArchonServerRunning(): Promise<boolean> {
-	try {
-		const result = await apiFetch<{ status: string }>("/api/health");
-		return result?.status === "ok";
-	} catch {
-		return false;
-	}
+	return undefined;
 }
