@@ -82,6 +82,8 @@ export interface WorkflowOverlayOptions {
 	onCancel?: () => void;
 	/** Called when the user presses 'a' while the workflow is paused at an approval gate */
 	onApprove?: () => void;
+	/** Called when the user presses 'r' while the workflow is paused at an approval gate */
+	onReject?: () => void;
 	/** Called when overlay wants to resize */
 	onResize?: (handle: OverlayHandle, width: number) => void;
 	overlayHandle?: OverlayHandle;
@@ -94,6 +96,7 @@ export class WorkflowOverlay implements Component {
 	private readonly tracker: DagProgressTracker;
 	private readonly onCancel?: () => void;
 	private readonly onApprove?: () => void;
+	private readonly onReject?: () => void;
 	private theme: Theme;
 	private startedAt: number;
 	private _expanded = false;
@@ -117,6 +120,7 @@ export class WorkflowOverlay implements Component {
 		this.tracker = opts.dagTracker;
 		this.onCancel = opts.onCancel;
 		this.onApprove = opts.onApprove;
+		this.onReject = opts.onReject;
 		this.theme = theme;
 		this.startedAt = Date.now();
 	}
@@ -296,7 +300,7 @@ export class WorkflowOverlay implements Component {
 
 		// When paused at an approval gate, show an approve keybinding hint
 		const isPaused = !!tracker.approvalPendingNodeId;
-		const approveHint = isPaused ? " · a=approve" : "";
+		const approveHint = isPaused ? " · a=approve r=reject" : "";
 
 		const footerHint = tracker.workflowDone
 			? tracker.workflowError
@@ -877,6 +881,12 @@ export class WorkflowOverlay implements Component {
 		// 'a' = approve (only when paused at an approval gate)
 		if (data === "a" && this.tracker.approvalPendingNodeId) {
 			this.onApprove?.();
+			return true;
+		}
+
+		// 'r' = reject (only when paused at an approval gate)
+		if (data === "r" && this.tracker.approvalPendingNodeId) {
+			this.onReject?.();
 			return true;
 		}
 

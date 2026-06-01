@@ -39,6 +39,7 @@ import {
 	runWorkflowBackground,
 	resumeWorkflowBackground,
 	approveWorkflowBackground,
+	rejectWorkflowBackground,
 	cancelRun,
 	getActiveRuns,
 	findPausedRun,
@@ -71,7 +72,8 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			"Use archon_workflow with action='cancel' to stop a running workflow by run ID.",
 			"Use archon_workflow with action='resume' to resume a failed or paused workflow run. Provide the run ID.",
 			"Use archon_workflow with action='approve' to approve a paused workflow at an approval gate. Provide the run ID and optionally a comment. The workflow auto-resumes after approval and its output is delivered as a user message.",
-			"IMPORTANT — APPROVAL GATES REQUIRE HUMAN-IN-LOOP: When a workflow pauses at an approval gate, the pause notification arrives as a user message. You MUST ask the user whether they want to approve or reject — do NOT auto-approve or auto-cancel. Only execute approve after the user explicitly says yes.",
+			"Use archon_workflow with action='reject' to reject a paused workflow at an approval gate. Provide the run ID and optionally a reason. The CLI handles both rejection and optional on_reject resume within the same process.",
+			"IMPORTANT — APPROVAL GATES REQUIRE HUMAN-IN-LOOP: When a workflow pauses at an approval gate, the pause notification arrives as a user message. You MUST ask the user whether they want to approve or reject — do NOT auto-approve or auto-cancel. Only execute approve/reject after the user explicitly says so.",
 			"When the user asks to create a new workflow, author the YAML in .archon/workflows/ first, then use archon_workflow run to launch it.",
 			"Archon workflows support conditional execution via 'when' expressions, 'trigger_rule' join semantics, structured output via 'output_format' (JSON Schema), approval gates, and loop iteration until completion.",
 		],
@@ -84,19 +86,20 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					"cancel",
 					"resume",
 					"approve",
+					"reject",
 					"info",
 				] as const,
 				{
 					description:
 						"Action: 'run' to launch, 'list' to discover, 'status' to check, 'cancel' to stop, " +
-						"'resume' to resume a failed/paused run, 'approve' to approve at an approval gate " +
+						"'resume' to resume a failed/paused run, 'approve'/'reject' at an approval gate " +
 						"(human-in-loop — must ask user first)",
 				},
 			),
 			runId: Type.Optional(
 				Type.String({
 					description:
-						"Run ID to check, cancel, resume, or approve (for 'status', 'cancel', 'resume', and 'approve' actions).",
+						"Run ID to check, cancel, resume, approve, or reject (for 'status', 'cancel', 'resume', 'approve', and 'reject' actions).",
 				}),
 			),
 			workflow: Type.Optional(
@@ -105,9 +108,15 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 						"Workflow name for 'run' and 'info' actions. Must match a .archon/workflows/*.yaml file.",
 				}),
 			),
+			reason: Type.Optional(
+				Type.String({
+					description:
+						"Reason for rejection (for 'reject' action). The on_reject prompt in the workflow will receive this.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-			const { action, workflow, query, runId, comment } = params;
+			const { action, workflow, query, runId, comment, reason } = params;
 			const cwd = ctx?.cwd || process.cwd();
 
 			switch (action) {
@@ -123,8 +132,12 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					return await handleResume(pi, runId, cwd, ctx);
 				case "approve":
 					return await handleApprove(pi, runId, comment, cwd, ctx);
+				case "reject":
+					return await handleReject(pi, runId, comment, cwd, ctx);
 				case "cancel":
 					return await handleCancel(pi, runId, cwd);
+				case "reject":
+					return await handleReject(pi, runId, reason, cwd, ctx);
 				default:
 					throw new Error(`Unknown action: ${action}`);
 			}
@@ -140,6 +153,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 				cancel: "✕ Cancel",
 				resume: "↻ Resume",
 				approve: "✓ Approve",
+				reject: "✗ Reject",
 			};
 			const label = actionLabels[action] ?? action;
 			const parts = [
@@ -205,6 +219,15 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					theme.fg(
 						"dim",
 						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 24)}${details?.comment ? ` · ${String(details?.comment).slice(0, 60)}` : ""}`,
+					),
+				];
+			} else if (action === "reject") {
+				const runIdStr = String(details?.runId ?? "");
+				lines = [
+					theme.fg("warning", `◆ archon ▸ rejected`),
+					theme.fg(
+						"dim",
+						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 24)}${details?.reason ? ` · ${String(details?.reason).slice(0, 60)}` : ""}`,
 					),
 				];
 			} else if (action === "run") {
@@ -828,6 +851,125 @@ async function handleResume(
 			action: "resume",
 			runId,
 			workflow: workflowName ?? "unknown",
+			exitCode: result.exitCode,
+			durationMs,
+		},
+	};
+}
+
+async function handleReject(
+	pi: ExtensionAPI,
+	runId?: string,
+	reason?: string,
+	cwd?: string,
+	ctx?: ToolCtx,
+): Promise<{
+	content: { type: string; text: string }[];
+	details: Record<string, unknown>;
+	terminate?: boolean;
+}> {
+	if (!runId) {
+		throw new Error("'runId' parameter is required for action='reject'");
+	}
+
+	const projectCwd = cwd || process.cwd();
+
+	// Try to resolve the workflow name from active runs first
+	let activeEntry = getActiveRuns().get(runId);
+	let workflowName = activeEntry?.workflowName;
+
+	// If not in active runs, check if this is an Archon UUID from a paused workflow
+	if (!workflowName) {
+		const pausedEntry = findPausedRun(runId);
+		if (pausedEntry) {
+			activeEntry = pausedEntry;
+			workflowName = pausedEntry.workflowName;
+		}
+	}
+
+	// If still not found, try querying the DB
+	if (!workflowName) {
+		try {
+			const detail = await getRunDetail(runId);
+			if (detail) {
+				workflowName = detail.run.workflow_name;
+			}
+		} catch {
+			// Best-effort
+		}
+	}
+
+	// Launch in background if UI available
+	if (ctx?.hasUI && ctx.ui && workflowName) {
+		// Dismiss paused-run overlay if we found one
+		activeEntry?.overlayHandle?.hide();
+
+		const localRunId = await rejectWorkflowBackground(
+			pi,
+			runId,
+			workflowName,
+			reason,
+			ctx as never,
+		);
+		if (localRunId) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`Workflow **${workflowName}** (${runId}) rejected${reason ? `: ${reason}` : ""}. ` +
+							`Result will be delivered automatically.`,
+					},
+				],
+				details: {
+					action: "reject",
+					runId,
+					workflow: workflowName,
+					reason: reason ?? undefined,
+				},
+				terminate: false,
+			};
+		}
+	}
+
+	// Fallback: synchronous CLI execution (no UI)
+	const { runArchonCommand } = await import("./archon-exec");
+	const startedAt = Date.now();
+
+	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree"];
+	if (reason) {
+		cliArgs.push(reason);
+	}
+	const result = await runArchonCommand(pi, cliArgs, projectCwd);
+	const durationMs = Date.now() - startedAt;
+	const success = result.exitCode === 0;
+
+	return {
+		content: [
+			{
+				type: "text",
+				text: [
+					`## Reject Result — ${runId}`,
+					"",
+					`- **Status:** ${success ? "✅ rejected" : "❌ failed"}`,
+					`- **Duration:** ${Math.round(durationMs / 1000)}s`,
+					reason ? `- **Reason:** ${reason}` : "",
+					result.exitCode !== 0 && result.stderr
+						? `- **Error:** ${result.stderr.slice(0, 500)}`
+						: "",
+					result.stdout
+						? `\`\`\`text\n${result.stdout.slice(0, 1000)}\n\`\`\``
+						: "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+			},
+		],
+		details: {
+			action: "reject",
+			runId,
+			workflow: workflowName ?? "unknown",
+			reason: reason ?? undefined,
 			exitCode: result.exitCode,
 			durationMs,
 		},

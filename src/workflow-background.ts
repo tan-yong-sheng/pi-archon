@@ -187,6 +187,28 @@ function runBackgroundCli(
 								/* best-effort */
 							});
 						},
+						onReject: () => {
+							// User pressed 'r' on a paused workflow — reject it
+							const archonRunId = entry.archonRunId;
+							if (!archonRunId) return;
+							// Dismiss the paused overlay
+							handle.hide();
+							// Clear the old paused entry's remaining timer + status
+							if (entry.statusTimer) clearInterval(entry.statusTimer);
+							ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+							ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
+							activeRuns.delete(localRunId);
+							// Launch reject in background via CLI
+							rejectWorkflowBackground(
+								pi,
+								archonRunId,
+								workflow,
+								undefined,
+								ctx as never,
+							).catch(() => {
+								/* best-effort */
+							});
+						},
 					},
 					theme,
 				);
@@ -357,8 +379,8 @@ function runBackgroundCli(
 						pauseContent += `The workflow is waiting for your decision. **Do NOT approve or cancel automatically** — ask the user whether they want to approve or reject.\n\n`;
 						pauseContent += `If the user approves, use:\n`;
 						pauseContent += `\`archon_workflow(action='approve', runId='${archonUuid}')\`\n\n`;
-						pauseContent += `If they reject (cancel), use:\n`;
-						pauseContent += `\`archon_workflow(action='cancel', runId='${archonUuid}')\``;
+						pauseContent += `If they want to reject, use:\n`;
+						pauseContent += `\`archon_workflow(action='reject', runId='${archonUuid}')\``;
 
 						if (typeof (pi as any).sendUserMessage === "function") {
 							(pi as any).sendUserMessage(pauseContent, {
@@ -652,6 +674,33 @@ export async function approveWorkflowBackground(
 	);
 }
 
+/**
+ * Reject a paused workflow run in the background.
+ * Spawns `archon workflow reject <runId> [reason]` as a single CLI subprocess.
+ * The CLI handles both the rejection AND the optional on_reject resume within
+ * the same process.
+ */
+export async function rejectWorkflowBackground(
+	pi: ExtensionAPI,
+	runId: string,
+	workflowName: string,
+	reason: string | undefined,
+	ctx: ExtensionCommandContext,
+): Promise<string | null> {
+	// Build CLI args: archon workflow reject <runId> [reason]
+	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree"];
+	if (reason) {
+		cliArgs.push(reason);
+	}
+	return runBackgroundCli(
+		pi,
+		workflowName,
+		reason ? `reject: ${reason.slice(0, 60)}` : "reject",
+		cliArgs,
+		ctx,
+	);
+}
+
 // ── Cancel a running workflow ────────────────────────────────
 
 export async function cancelRun(runId: string): Promise<void> {
@@ -660,11 +709,14 @@ export async function cancelRun(runId: string): Promise<void> {
 
 	// Send cancel to Archon
 	try {
-		const archonRunId = await findActiveWorkflowRunId(
-			{} as ExtensionAPI,
-			entry.process?.spawnargs?.[0] ?? process.cwd(),
-			entry.workflowName,
-		);
+		// For paused workflows, use the stored archonRunId
+		const archonRunId =
+			entry.archonRunId ??
+			(await findActiveWorkflowRunId(
+				{} as ExtensionAPI,
+				entry.process?.spawnargs?.[0] ?? process.cwd(),
+				entry.workflowName,
+			));
 		if (archonRunId) {
 			await cancelArchonWorkflowRun(
 				{} as ExtensionAPI,
