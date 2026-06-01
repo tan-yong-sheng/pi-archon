@@ -56,8 +56,32 @@ export function truncateOutputBlock(
 	text: string,
 	label: "stdout" | "stderr",
 ): string {
-	const cleaned = cleanOutput(redactSecrets(text || ""));
+	let raw = redactSecrets(text || "");
+	// Archon CLI emits AI node output text twice: once during node execution,
+	// and again after the dag_workflow_finished JSON line. Strip the duplicate
+	// by cutting at the dag_workflow_finished marker.
+	raw = stripAfterWorkflowFinished(raw);
+	const cleaned = cleanOutput(raw);
 	return cleaned || `(no ${label})`;
+}
+
+/**
+ * Strip content after the dag_workflow_finished JSON line.
+ * Archon CLI re-prints all AI node output after this line, causing duplication.
+ * The JSON line looks like: {"msg":"dag_workflow_finished",...}
+ */
+function stripAfterWorkflowFinished(text: string): string {
+	const lines = text.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]?.trim() ?? "";
+		if (
+			line.startsWith("{") &&
+			line.includes("dag_workflow_finished")
+		) {
+			return lines.slice(0, i).join("\n");
+		}
+	}
+	return text;
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -91,9 +91,7 @@ export function getActiveRun(runId: string): ActiveWorkflowRun | undefined {
 
 // ── Resolve archon CLI binary ───────────────────────────────
 
-function resolveArchonBin(
-	_cwd: string,
-): { cmd: string; args: string[] } {
+function resolveArchonBin(_cwd: string): { cmd: string; args: string[] } {
 	// Reuse the same logic as archon-exec.ts
 	const fs = require("node:fs");
 	const path = require("node:path");
@@ -126,8 +124,7 @@ export function runWorkflowBackground(
 	const runId = nextRunId();
 	const cwd = ctx.cwd || process.cwd();
 	const tracker = new DagProgressTracker();
-	const queryPreview =
-		query.length > 72 ? `${query.slice(0, 72)}…` : query;
+	const queryPreview = query.length > 72 ? `${query.slice(0, 72)}…` : query;
 
 	const entry: ActiveWorkflowRun = {
 		workflowName: workflow,
@@ -275,10 +272,7 @@ export function runWorkflowBackground(
 						if (!rid) return;
 						const nodeOutputs = await queryNodeOutputs(rid);
 						for (const nodeInfo of nodeOutputs) {
-							if (
-								nodeInfo.output &&
-								!lastApiPolledNodes.has(nodeInfo.nodeId)
-							) {
+							if (nodeInfo.output && !lastApiPolledNodes.has(nodeInfo.nodeId)) {
 								tracker.setNodeOutput(nodeInfo.nodeId, nodeInfo.output);
 								lastApiPolledNodes.add(nodeInfo.nodeId);
 							}
@@ -372,9 +366,10 @@ export function runWorkflowBackground(
 
 						convSSE.onToolCall = (name, input) => {
 							// Update the active node's tool info
-							const inputStr = Object.keys(input).length > 0
-								? ` ${JSON.stringify(input).slice(0, 60)}`
-								: "";
+							const inputStr =
+								Object.keys(input).length > 0
+									? ` ${JSON.stringify(input).slice(0, 60)}`
+									: "";
 							tracker.appendLogLine(`⟳ ${name}${inputStr}`);
 							// Also update the tracker's activeTool
 							tracker.setCurrentNodeTool(name);
@@ -387,12 +382,8 @@ export function runWorkflowBackground(
 									? `${Math.round(duration / 100) / 10}s`
 									: `${duration}ms`;
 							const outputPreview =
-								output.length > 80
-									? `${output.slice(0, 80)}…`
-									: output;
-							tracker.appendLogLine(
-								`✓ ${name} (${durStr}): ${outputPreview}`,
-							);
+								output.length > 80 ? `${output.slice(0, 80)}…` : output;
+							tracker.appendLogLine(`✓ ${name} (${durStr}): ${outputPreview}`);
 							tui.requestRender();
 						};
 
@@ -464,8 +455,7 @@ export function runWorkflowBackground(
 							const nodeOutputs = await queryNodeOutputs(rid);
 							if (nodeOutputs.length > 0) {
 								// Build result from structured node outputs (no duplication)
-								const status =
-									exitCode === 0 ? "✅ success" : "❌ failed";
+								const status = exitCode === 0 ? "✅ success" : "❌ failed";
 								const duration =
 									typeof durationMs === "number"
 										? fmtElapsed(Math.floor(durationMs / 1000))
@@ -504,8 +494,7 @@ export function runWorkflowBackground(
 					}
 
 					// Query artifacts (best-effort, awaited)
-					let artifacts: Awaited<ReturnType<typeof queryRunArtifacts>> =
-						[];
+					let artifacts: Awaited<ReturnType<typeof queryRunArtifacts>> = [];
 					try {
 						const rid = await findLatestRunId(workflow, cwd);
 						if (rid) artifacts = await queryRunArtifacts(rid);
@@ -586,10 +575,7 @@ export function runWorkflowBackground(
 						},
 						{ deliverAs: "steer" },
 					);
-					ctx.ui.notify?.(
-						`Archon ${workflow} failed: ${err.message}`,
-						"error",
-					);
+					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
 					activeRuns.delete(runId);
 				});
 

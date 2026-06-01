@@ -276,19 +276,34 @@ export class ArchonConversationSSE {
 	private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Called with accumulated text (batched at 50ms intervals, matching Web UI) */
-	onText?: (content: string, workflowResult?: { workflowName: string; runId: string }) => void;
+	onText?: (
+		content: string,
+		workflowResult?: { workflowName: string; runId: string },
+	) => void;
 
 	/** Called when a tool starts executing */
-	onToolCall?: (name: string, input: Record<string, unknown>, toolCallId?: string) => void;
+	onToolCall?: (
+		name: string,
+		input: Record<string, unknown>,
+		toolCallId?: string,
+	) => void;
 
 	/** Called when a tool completes with output */
-	onToolResult?: (name: string, output: string, duration: number, toolCallId?: string) => void;
+	onToolResult?: (
+		name: string,
+		output: string,
+		duration: number,
+		toolCallId?: string,
+	) => void;
 
 	/** Called on errors */
 	onError?: (message: string, classification?: string) => void;
 
 	/** Called when workflow dispatch event is received */
-	onWorkflowDispatch?: (workerConversationId: string, workflowName: string) => void;
+	onWorkflowDispatch?: (
+		workerConversationId: string,
+		workflowName: string,
+	) => void;
 
 	/** Called when retract event is received */
 	onRetract?: () => void;
@@ -296,10 +311,7 @@ export class ArchonConversationSSE {
 	/** Called when connection state changes */
 	onConnectionChange?: (connected: boolean) => void;
 
-	constructor(
-		baseUrl = "http://127.0.0.1:3090",
-		conversationId: string,
-	) {
+	constructor(baseUrl = "http://127.0.0.1:3090", conversationId: string) {
 		this.baseUrl = baseUrl;
 		this.conversationId = conversationId;
 	}

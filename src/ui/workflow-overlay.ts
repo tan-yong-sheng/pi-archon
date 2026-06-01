@@ -209,10 +209,7 @@ export class WorkflowOverlay implements Component {
 		}
 
 		// ── Section 2: Node list ───────────────────────────
-		lines.push(
-			border(bl) +
-				border("├" + "─".repeat(innerWidth - 1) + "┤"),
-		);
+		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
 		const nodes = tracker.nodes;
 		const maxNodeVisible = this._expanded ? 10 : 4;
@@ -220,10 +217,7 @@ export class WorkflowOverlay implements Component {
 		if (this.scrollOffset > maxScroll) this.scrollOffset = maxScroll;
 		if (this.scrollOffset < 0) this.scrollOffset = 0;
 		if (nodes.length > 0) {
-			this.selectedNodeIdx = Math.min(
-				this.selectedNodeIdx,
-				nodes.length - 1,
-			);
+			this.selectedNodeIdx = Math.min(this.selectedNodeIdx, nodes.length - 1);
 		}
 
 		const visible = nodes.slice(
@@ -257,8 +251,7 @@ export class WorkflowOverlay implements Component {
 		}
 
 		if (nodes.length > this.scrollOffset + maxNodeVisible) {
-			const remaining =
-				nodes.length - this.scrollOffset - maxNodeVisible;
+			const remaining = nodes.length - this.scrollOffset - maxNodeVisible;
 			lines.push(
 				border(bl) +
 					padLine(th.fg("dim", ` ↓ ${remaining} more below`), innerWidth) +
@@ -276,18 +269,16 @@ export class WorkflowOverlay implements Component {
 
 		// ── Section 3: Output panel ────────────────────────
 		// Show the selected node's output (or running node if nothing selected)
-		const outputNode =
-			nodes.length > 0 ? nodes[this.selectedNodeIdx] : null;
+		const outputNode = nodes.length > 0 ? nodes[this.selectedNodeIdx] : null;
 		const runningNode = this.findRunningNode(nodes);
 
 		// Prefer the selected node, but if it's the running node, show live output
 		const displayNode =
-			outputNode?.state === "running" ? outputNode : runningNode ?? outputNode;
+			outputNode?.state === "running"
+				? outputNode
+				: (runningNode ?? outputNode);
 
-		lines.push(
-			border(bl) +
-				border("├" + "─".repeat(innerWidth - 1) + "┤"),
-		);
+		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
 		if (displayNode) {
 			// Output section header
@@ -350,15 +341,15 @@ export class WorkflowOverlay implements Component {
 
 				const visibleOut = outLines.slice(
 					this.outputScrollOffset,
-					this.outputScrollOffset + maxOutVisible - (this.outputScrollOffset > 0 ? 1 : 0),
+					this.outputScrollOffset +
+						maxOutVisible -
+						(this.outputScrollOffset > 0 ? 1 : 0),
 				);
 
 				for (const logLine of visibleOut) {
 					const rendered = this.renderLogLine(logLine, innerWidth - 2);
 					lines.push(
-						border(bl) +
-							padLine(` ${rendered}`, innerWidth) +
-							border(bl),
+						border(bl) + padLine(` ${rendered}`, innerWidth) + border(bl),
 					);
 				}
 
@@ -367,24 +358,16 @@ export class WorkflowOverlay implements Component {
 					(this.outputScrollOffset > 0 ? 1 : 0) + visibleOut.length;
 				const remaining = maxOutVisible - usedLines;
 				for (let i = 0; i < remaining; i++) {
-					lines.push(
-						border(bl) + " ".repeat(innerWidth) + border(bl),
-					);
+					lines.push(border(bl) + " ".repeat(innerWidth) + border(bl));
 				}
 
 				// Scroll indicator bottom
-				if (
-					this.outputScrollOffset + maxOutVisible <
-					outLines.length
-				) {
+				if (this.outputScrollOffset + maxOutVisible < outLines.length) {
 					const moreBelow =
 						outLines.length - this.outputScrollOffset - maxOutVisible;
 					lines[lines.length - 1] =
 						border(bl) +
-						padLine(
-							th.fg("dim", ` ↓ ${moreBelow} lines below`),
-							innerWidth,
-						) +
+						padLine(th.fg("dim", ` ↓ ${moreBelow} lines below`), innerWidth) +
 						border(bl);
 				}
 			}
@@ -395,15 +378,12 @@ export class WorkflowOverlay implements Component {
 					border(bl),
 			);
 			for (let i = 0; i < 3; i++) {
-				lines.push(
-					border(bl) + " ".repeat(innerWidth) + border(bl),
-				);
+				lines.push(border(bl) + " ".repeat(innerWidth) + border(bl));
 			}
 		}
 
 		// ── Footer ───────────────────────────────────────────
-		const scrollHint =
-			nodes.length > maxNodeVisible ? " · ↑/↓ nodes" : "";
+		const scrollHint = nodes.length > maxNodeVisible ? " · ↑/↓ nodes" : "";
 		const enterHint = nodes.length > 0 ? " · Enter=logs" : "";
 		const tabHint = " · Tab=output";
 		const footerHint = tracker.workflowDone
@@ -414,9 +394,7 @@ export class WorkflowOverlay implements Component {
 					"dim",
 					` Esc=cancel · e=expand${scrollHint}${enterHint}${tabHint} `,
 				);
-		lines.push(
-			border("╰") + padLine(footerHint, innerWidth) + border("╯"),
-		);
+		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
 		return lines;
 	}
@@ -434,9 +412,7 @@ export class WorkflowOverlay implements Component {
 
 		let suffix = "";
 		if (node.state === "running" && node.startedAt) {
-			const nodeElapsed = Math.floor(
-				(Date.now() - node.startedAt) / 1000,
-			);
+			const nodeElapsed = Math.floor((Date.now() - node.startedAt) / 1000);
 			suffix = th.fg("dim", ` ${fmtElapsed(nodeElapsed)}`);
 		} else if (node.state === "done" && node.duration) {
 			suffix = th.fg("dim", ` ${node.duration}`);
@@ -446,10 +422,7 @@ export class WorkflowOverlay implements Component {
 		} else if (node.state === "skipped" && node.skipReason) {
 			suffix = th.fg("dim", ` ${node.skipReason}`);
 		} else if (node.state === "approval" && node.approvalMessage) {
-			const msg = truncateToWidth(
-				node.approvalMessage,
-				innerWidth - 16,
-			);
+			const msg = truncateToWidth(node.approvalMessage, innerWidth - 16);
 			suffix = th.fg("warning", ` ${msg}`);
 		}
 
@@ -535,10 +508,7 @@ export class WorkflowOverlay implements Component {
 
 	private handleProgressInput(data: string): boolean {
 		// ESC = cancel
-		if (
-			matchesKey(data, Key.escape) ||
-			matchesKey(data, Key.ctrl("c"))
-		) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
 			this.onCancel?.();
 			return true;
 		}
@@ -598,8 +568,7 @@ export class WorkflowOverlay implements Component {
 				this.outputScrollOffset = 0;
 				const maxVisible = this._expanded ? 10 : 4;
 				if (this.selectedNodeIdx >= this.scrollOffset + maxVisible) {
-					this.scrollOffset =
-						this.selectedNodeIdx - maxVisible + 1;
+					this.scrollOffset = this.selectedNodeIdx - maxVisible + 1;
 				}
 			}
 			return true;
@@ -622,8 +591,7 @@ export class WorkflowOverlay implements Component {
 			);
 			const maxVisible = this._expanded ? 10 : 4;
 			if (this.selectedNodeIdx >= this.scrollOffset + maxVisible) {
-				this.scrollOffset =
-					this.selectedNodeIdx - maxVisible + 1;
+				this.scrollOffset = this.selectedNodeIdx - maxVisible + 1;
 			}
 			return true;
 		}
@@ -649,11 +617,7 @@ export class WorkflowOverlay implements Component {
 		const headerText = `${th.fg(color, icon)} ${th.bold(node.id)}${th.fg("muted", typeTag)}`;
 
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
-		lines.push(
-			border(bl) +
-				padLine(` ${headerText}`, innerWidth) +
-				border(bl),
-		);
+		lines.push(border(bl) + padLine(` ${headerText}`, innerWidth) + border(bl));
 
 		// ── Status line ──────────────────────────────────────
 		let statusLine = "";
@@ -686,17 +650,12 @@ export class WorkflowOverlay implements Component {
 
 		if (statusLine) {
 			lines.push(
-				border(bl) +
-					padLine(` ${statusLine}`, innerWidth) +
-					border(bl),
+				border(bl) + padLine(` ${statusLine}`, innerWidth) + border(bl),
 			);
 		}
 
 		// ── Separator ────────────────────────────────────────
-		lines.push(
-			border(bl) +
-				border("├" + "─".repeat(innerWidth - 1) + "┤"),
-		);
+		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
 		// ── Log lines — prefer nodeOutput (API) over logLines (stderr) ──
 		let logLines: string[];
@@ -717,23 +676,16 @@ export class WorkflowOverlay implements Component {
 				node.state === "running"
 					? th.fg("dim", " (waiting for output…)")
 					: th.fg("dim", " (no log output captured)");
-			lines.push(
-				border(bl) + padLine(emptyMsg, innerWidth) + border(bl),
-			);
+			lines.push(border(bl) + padLine(emptyMsg, innerWidth) + border(bl));
 			for (let i = 1; i < maxLogVisible; i++) {
-				lines.push(
-					border(bl) + " ".repeat(innerWidth) + border(bl),
-				);
+				lines.push(border(bl) + " ".repeat(innerWidth) + border(bl));
 			}
 		} else {
 			if (this.logScrollOffset > 0) {
 				lines.push(
 					border(bl) +
 						padLine(
-							th.fg(
-								"dim",
-								` ↑ ${this.logScrollOffset} lines above`,
-							),
+							th.fg("dim", ` ↑ ${this.logScrollOffset} lines above`),
 							innerWidth,
 						) +
 						border(bl),
@@ -750,20 +702,15 @@ export class WorkflowOverlay implements Component {
 			for (const logLine of visibleLogs) {
 				const rendered = this.renderLogLine(logLine, innerWidth - 2);
 				lines.push(
-					border(bl) +
-						padLine(` ${rendered}`, innerWidth) +
-						border(bl),
+					border(bl) + padLine(` ${rendered}`, innerWidth) + border(bl),
 				);
 			}
 
 			// Pad remaining space
-			const usedLines =
-				(this.logScrollOffset > 0 ? 1 : 0) + visibleLogs.length;
+			const usedLines = (this.logScrollOffset > 0 ? 1 : 0) + visibleLogs.length;
 			const remaining = maxLogVisible - usedLines;
 			for (let i = 0; i < remaining; i++) {
-				lines.push(
-					border(bl) + " ".repeat(innerWidth) + border(bl),
-				);
+				lines.push(border(bl) + " ".repeat(innerWidth) + border(bl));
 			}
 
 			if (this.logScrollOffset + maxLogVisible < logLines.length) {
@@ -771,23 +718,15 @@ export class WorkflowOverlay implements Component {
 					logLines.length - this.logScrollOffset - maxLogVisible;
 				lines[lines.length - 1] =
 					border(bl) +
-					padLine(
-						th.fg("dim", ` ↓ ${moreBelow} lines below`),
-						innerWidth,
-					) +
+					padLine(th.fg("dim", ` ↓ ${moreBelow} lines below`), innerWidth) +
 					border(bl);
 			}
 		}
 
 		// ── Footer ───────────────────────────────────────────
 		const lineInfo = `${this.logScrollOffset + 1}-${Math.min(this.logScrollOffset + maxLogVisible, Math.max(logLines.length, 1))}/${logLines.length}`;
-		const footerHint = th.fg(
-			"dim",
-			` Esc=back · ↑/↓ scroll · ${lineInfo} `,
-		);
-		lines.push(
-			border("╰") + padLine(footerHint, innerWidth) + border("╯"),
-		);
+		const footerHint = th.fg("dim", ` Esc=back · ↑/↓ scroll · ${lineInfo} `);
+		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
 		return lines;
 	}

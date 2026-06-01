@@ -2,7 +2,6 @@ import type {
 	DagEvent,
 	DagNodeInfo,
 	DagNodeState,
-	LoopIterationInfo,
 	ToolActivity,
 } from "./types";
 import { tryParseDagEvent } from "./output-filter";
@@ -126,6 +125,10 @@ export class DagProgressTracker {
 	 * are filtered out so only meaningful output reaches the inspector.
 	 */
 	appendLogLine(line: string): void {
+		// Stop capturing once the workflow is done —
+		// Archon CLI re-prints AI node output after dag_workflow_finished,
+		// which would duplicate lines already captured during node execution.
+		if (this.#workflowDone) return;
 		const trimmed = line.trim();
 		if (!trimmed) return;
 		if (isLogNoise(trimmed)) return;
@@ -156,6 +159,7 @@ export class DagProgressTracker {
 	}
 
 	appendLogLineTo(nodeId: string, line: string): void {
+		if (this.#workflowDone) return;
 		const trimmed = line.trim();
 		if (!trimmed) return;
 		if (isLogNoise(trimmed)) return;
