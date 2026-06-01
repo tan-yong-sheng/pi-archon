@@ -3,7 +3,9 @@ import type {
 	DagNodeInfo,
 	DagNodeState,
 	ToolActivity,
+	ToolCallRecord,
 } from "./types";
+
 import { tryParseDagEvent } from "./output-filter";
 import { formatElapsed } from "./helpers";
 import { MAX_NODE_LOG_LINES } from "./constants";
@@ -18,17 +20,20 @@ import { MAX_NODE_LOG_LINES } from "./constants";
  * into the node's logLines ring buffer for inspection via the
  * WorkflowOverlay log inspector view.
  *
+ * Also tracks streaming AI text and structured tool calls per node,
+ * populated from the conversation SSE stream for real-time observability.
+ *
  * Also tracks loop iteration progress for nodes that run as loops.
  * Since the Archon CLI does not emit loop iteration events to stderr,
  * iteration data must be injected via applyEvent() (typically from
  * a periodic DB query during the run).
  *
  * Usage:
- *   const tracker = new DagProgressTracker();
- *   tracker.onLine("[investigate] Started", false);
- *   tracker.onLine("some output line", true);
- *   tracker.onLine("[investigate] Completed (45s)", false);
- *   console.log(tracker.nodes[0].logLines); // → ["some output line"]
+ * const tracker = new DagProgressTracker();
+ * tracker.onLine("[investigate] Started", false);
+ * tracker.onLine("some output line", true);
+ * tracker.onLine("[investigate] Completed (45s)", false);
+ * console.log(tracker.nodes[0].logLines); // → ["some output line"]
  */
 export class DagProgressTracker {
 	#nodes = new Map<string, DagNodeInfo>();
@@ -85,11 +90,24 @@ export class DagProgressTracker {
 		return this.nodes.filter((n) => n.state === "running").map((n) => n.id);
 	}
 
-	/** Get the active tool for a specific node */
+	/** Get the active tool for a specific node (legacy ToolActivity map) */
 	getActiveTool(nodeId: string): ToolActivity | undefined {
 		for (const tool of this.#tools.values()) {
 			if (tool.stepName === nodeId && tool.durationMs === undefined) {
 				return tool;
+			}
+		}
+		return undefined;
+	}
+
+	/** Get the last in-flight tool call record for a node (still running, no output yet) */
+	getActiveToolCall(nodeId: string): ToolCallRecord | undefined {
+		const node = this.#nodes.get(nodeId);
+		if (!node) return undefined;
+		// Find last tool call without output
+		for (let i = node.toolCalls.length - 1; i >= 0; i--) {
+			if (node.toolCalls[i].output === undefined) {
+				return node.toolCalls[i];
 			}
 		}
 		return undefined;
@@ -129,14 +147,19 @@ export class DagProgressTracker {
 		// Archon CLI re-prints AI node output after dag_workflow_finished,
 		// which would duplicate lines already captured during node execution.
 		if (this.#workflowDone) return;
+
 		const trimmed = line.trim();
 		if (!trimmed) return;
 		if (isLogNoise(trimmed)) return;
+
 		const nodeId = this.currentRunningNodeId;
 		if (!nodeId) return;
+
 		const node = this.#nodes.get(nodeId);
 		if (!node) return;
+
 		node.logLines.push(line);
+
 		// Ring buffer: keep only the last MAX_NODE_LOG_LINES
 		if (node.logLines.length > MAX_NODE_LOG_LINES) {
 			node.logLines.splice(0, node.logLines.length - MAX_NODE_LOG_LINES);
@@ -144,9 +167,113 @@ export class DagProgressTracker {
 	}
 
 	/**
-	 * Append a raw output line to a specific node's log buffer.
-	 * Used when we know which node the output belongs to.
+	 * Append streaming AI text to a specific node.
+	 * Called from conversation SSE onText — the text accumulates
+	 * in node.streamingText for real-time display.
 	 */
+	appendStreamingText(nodeId: string, text: string): void {
+		if (this.#workflowDone) return;
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		node.streamingText += text;
+	}
+
+	/**
+	 * Append streaming AI text to the currently-running node.
+	 * Convenience wrapper used by conversation SSE onText.
+	 */
+	appendStreamingTextToCurrent(text: string): void {
+		if (this.#workflowDone) return;
+		const nodeId = this.currentRunningNodeId;
+		if (!nodeId) return;
+		this.appendStreamingText(nodeId, text);
+	}
+
+	/**
+	 * Start a new tool call on a specific node.
+	 * Called from conversation SSE onToolCall or dashboard SSE workflow_tool_activity.
+	 */
+	startToolCall(
+		nodeId: string,
+		name: string,
+		input: Record<string, unknown>,
+		toolCallId?: string,
+	): void {
+		if (this.#workflowDone) return;
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+
+		node.toolCalls.push({
+			name,
+			input,
+			startedAt: Date.now(),
+			toolCallId,
+		});
+
+		// Also update the legacy activeTool field for compatibility
+		this.upsertNode(nodeId, { activeTool: name });
+	}
+
+	/**
+	 * Complete a tool call on a specific node.
+	 * Called from conversation SSE onToolResult or dashboard SSE workflow_tool_activity.
+	 */
+	completeToolCall(
+		nodeId: string,
+		name: string,
+		output: string,
+		durationMs: number,
+		toolCallId?: string,
+	): void {
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+
+		// Find the matching tool call — match by name + toolCallId, or by name + no output
+		for (let i = node.toolCalls.length - 1; i >= 0; i--) {
+			const tc = node.toolCalls[i];
+			if (
+				tc.name === name &&
+				tc.output === undefined &&
+				(toolCallId ? tc.toolCallId === toolCallId : true)
+			) {
+				node.toolCalls[i] = {
+					...tc,
+					output,
+					durationMs,
+				};
+				break;
+			}
+		}
+
+		// If this was the active tool, clear it
+		if (node.activeTool === name) {
+			this.upsertNode(nodeId, { activeTool: undefined });
+		}
+	}
+
+	/**
+	 * Toggle the expanded state of a tool call record.
+	 */
+	toggleToolCallExpanded(nodeId: string, index: number): void {
+		const node = this.#nodes.get(nodeId);
+		if (!node || index < 0 || index >= node.toolCalls.length) return;
+		node.toolCalls[index] = {
+			...node.toolCalls[index],
+			expanded: !node.toolCalls[index].expanded,
+		};
+	}
+
+	/**
+	 * Toggle the iteration expansion state for a loop node.
+	 */
+	toggleIterationsExpanded(nodeId: string): void {
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		this.upsertNode(nodeId, {
+			iterationsExpanded: !node.iterationsExpanded,
+		});
+	}
+
 	/**
 	 * Set the full node output for a specific node (from Archon API).
 	 * This is the complete output text from the node_completed event,
@@ -158,14 +285,22 @@ export class DagProgressTracker {
 		node.nodeOutput = output;
 	}
 
+	/**
+	 * Append a raw output line to a specific node's log buffer.
+	 * Used when we know which node the output belongs to.
+	 */
 	appendLogLineTo(nodeId: string, line: string): void {
 		if (this.#workflowDone) return;
+
 		const trimmed = line.trim();
 		if (!trimmed) return;
 		if (isLogNoise(trimmed)) return;
+
 		const node = this.#nodes.get(nodeId);
 		if (!node) return;
+
 		node.logLines.push(line);
+
 		if (node.logLines.length > MAX_NODE_LOG_LINES) {
 			node.logLines.splice(0, node.logLines.length - MAX_NODE_LOG_LINES);
 		}
@@ -373,7 +508,16 @@ export class DagProgressTracker {
 		} else {
 			const state = patch.state ?? "queued";
 			const logLines = patch.logLines ?? [];
-			this.#nodes.set(id, { id, ...patch, state, logLines });
+			const streamingText = patch.streamingText ?? "";
+			const toolCalls = patch.toolCalls ?? [];
+			this.#nodes.set(id, {
+				id,
+				...patch,
+				state,
+				logLines,
+				streamingText,
+				toolCalls,
+			});
 			this.#nodeOrder.push(id);
 		}
 	}

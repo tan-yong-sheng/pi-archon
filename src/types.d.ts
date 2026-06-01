@@ -266,8 +266,8 @@ export type DagEvent =
 			costUsd?: number;
 			numTurns?: number;
 	  }
-	| { type: "node_failed"; nodeId: string; nodeName?: string; error: string; }
-	| { type: "node_skipped"; nodeId: string; nodeName?: string; reason: string; }
+	| { type: "node_failed"; nodeId: string; nodeName?: string; error: string }
+	| { type: "node_skipped"; nodeId: string; nodeName?: string; reason: string }
 	| { type: "approval_pending"; nodeId: string; message: string }
 	| { type: "tool_started"; stepName: string; toolName: string }
 	| {
@@ -337,6 +337,16 @@ export interface DagNodeInfo {
 	logLines: string[];
 	/** Full node output from Archon API (node_completed event node_output field) */
 	nodeOutput?: string;
+	/** Accumulated streaming AI text from conversation SSE (real-time, grows as text arrives).
+	 * When the node completes, this holds the full AI response text.
+	 * Cleared when a new node starts. */
+	streamingText: string;
+	/** Structured tool call records for this node, in execution order.
+	 * Each record tracks name, input, output, duration, and expansion state.
+	 * Populated from conversation SSE tool_call/tool_result events. */
+	toolCalls: ToolCallRecord[];
+	/** Whether iteration sub-list is expanded in the UI */
+	iterationsExpanded?: boolean;
 }
 
 export interface ToolActivity {
@@ -344,6 +354,26 @@ export interface ToolActivity {
 	stepName: string;
 	startedAt: number;
 	durationMs?: number;
+}
+
+/** Structured tool call record for observability in WorkflowOverlay.
+ * Tracks individual tool invocations with their input/output/duration,
+ * enabling rendering as expandable cards matching Archon Web UI. */
+export interface ToolCallRecord {
+	/** Tool name (e.g. 'Read', 'Write', 'Bash') */
+	name: string;
+	/** Input parameters as a JSON object */
+	input: Record<string, unknown>;
+	/** Output text (set on completion) */
+	output?: string;
+	/** Duration in milliseconds (set on completion) */
+	durationMs?: number;
+	/** When the tool was started (epoch ms) */
+	startedAt: number;
+	/** Optional tool call ID for matching start/end */
+	toolCallId?: string;
+	/** Whether this tool call's output is expanded in the UI */
+	expanded?: boolean;
 }
 
 export interface ProgressStepInfo {

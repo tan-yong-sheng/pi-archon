@@ -320,6 +320,23 @@ export function runWorkflowBackground(
 							runId: event.runId,
 						} as never);
 					}
+					// On workflow_tool_activity, also update structured tool call records
+					// (fallback when conversation SSE is not connected)
+					if (event.type === "workflow_tool_activity") {
+						const nodeId = event.stepName;
+						if (nodeId) {
+							if (event.status === "started") {
+								tracker.startToolCall(nodeId, event.toolName, {});
+							} else if (event.status === "completed") {
+								tracker.completeToolCall(
+									nodeId,
+									event.toolName,
+									"", // Dashboard SSE doesn't provide output
+									event.durationMs ?? 0,
+								);
+							}
+						}
+					}
 				};
 
 				// Connect async — don't block if server isn't running
@@ -360,23 +377,34 @@ export function runWorkflowBackground(
 
 						convSSE.onText = (content) => {
 							// Append streaming AI text to the currently-running node
+							// Use BOTH streamingText (for structured display) and logLines (for fallback)
+							tracker.appendStreamingTextToCurrent(content);
 							tracker.appendLogLine(content);
 							tui.requestRender();
 						};
 
-						convSSE.onToolCall = (name, input) => {
-							// Update the active node's tool info
+						convSSE.onToolCall = (name, input, toolCallId) => {
+							// Start a structured tool call record on the running node
+							const nodeId = tracker.currentRunningNodeId;
+							if (nodeId) {
+								tracker.startToolCall(nodeId, name, input, toolCallId);
+							}
+							// Also keep log line for fallback
 							const inputStr =
 								Object.keys(input).length > 0
 									? ` ${JSON.stringify(input).slice(0, 60)}`
 									: "";
 							tracker.appendLogLine(`⟳ ${name}${inputStr}`);
-							// Also update the tracker's activeTool
-							tracker.setCurrentNodeTool(name);
 							tui.requestRender();
 						};
 
-						convSSE.onToolResult = (name, output, duration) => {
+						convSSE.onToolResult = (name, output, duration, toolCallId) => {
+							// Complete the structured tool call record on the running node
+							const nodeId = tracker.currentRunningNodeId;
+							if (nodeId) {
+								tracker.completeToolCall(nodeId, name, output, duration, toolCallId);
+							}
+							// Also keep log line for fallback
 							const durStr =
 								duration > 1000
 									? `${Math.round(duration / 100) / 10}s`

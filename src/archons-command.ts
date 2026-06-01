@@ -20,10 +20,7 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI, Theme } from "@mariozechner/pi-tui";
-import {
-	SelectList,
-	type SelectItem,
-} from "@mariozechner/pi-tui";
+import { SelectList, type SelectItem, truncateToWidth } from "@mariozechner/pi-tui";
 import {
 	getActiveRuns,
 	cancelRun,
@@ -256,7 +253,11 @@ class ArchonsDashboard implements Component {
 				if (entry) {
 					this.list = this.buildRunDetailList(this.selectedRunId);
 				}
-			} else if (this.level === "node-detail" && this.selectedRunId && this.selectedNodeId) {
+			} else if (
+				this.level === "node-detail" &&
+				this.selectedRunId &&
+				this.selectedNodeId
+			) {
 				// Refresh node detail to pick up new log lines from tracker
 				this.activeRuns = getActiveRuns();
 				this.list = this.buildNodeDetailList(this.selectedNodeId);
@@ -845,6 +846,65 @@ class ArchonsDashboard implements Component {
 			}
 		}
 
+		// Streaming AI text (from conversation SSE)
+		if (node?.streamingText) {
+			items.push({
+				value: "__section_streaming__",
+				label: th.fg("accent", ` Streaming Text (${node.streamingText.length} chars)`),
+				description: "",
+			});
+			const streamLines = node.streamingText.split("\n");
+			const showLines = streamLines.slice(-10);
+			for (let i = 0; i < showLines.length; i++) {
+				const lineText = showLines[i].length > 70 ? showLines[i].slice(0, 67) + "…" : showLines[i];
+				items.push({
+					value: `stream:${i}`,
+					label: `  ${lineText}`,
+					description: "",
+				});
+			}
+			if (streamLines.length > 10) {
+				items.push({
+					value: "__stream_more__",
+					label: th.fg("dim", `  … ${streamLines.length - 10} earlier lines`),
+					description: "",
+				});
+			}
+		}
+
+		// Tool calls (structured records from conversation/dashboard SSE)
+		if (node && node.toolCalls.length > 0) {
+			items.push({
+				value: "__section_tools__",
+				label: th.fg("accent", ` Tool Calls (${node.toolCalls.length})`),
+				description: "",
+			});
+			for (let ti = 0; ti < node.toolCalls.length; ti++) {
+				const tc = node.toolCalls[ti];
+				const isCompleted = tc.output !== undefined;
+				if (isCompleted) {
+					const durStr = tc.durationMs != null
+						? (tc.durationMs > 1000 ? `${Math.round(tc.durationMs / 100) / 10}s` : `${tc.durationMs}ms`)
+						: "";
+					const outPreview = tc.output && tc.output.length > 50
+						? `${tc.output.slice(0, 50)}…`
+						: (tc.output ?? "");
+					items.push({
+						value: `tool:${ti}`,
+						label: `${th.fg("success", "✓")} ${tc.name}${th.fg("dim", ` (${durStr})`)}`,
+						description: truncateToWidth(outPreview, 60),
+					});
+				} else {
+					const elapsed = Math.floor((Date.now() - tc.startedAt) / 1000);
+					items.push({
+						value: `tool:${ti}`,
+						label: `${th.fg("accent", "●")} ${tc.name}${th.fg("dim", ` · ${elapsed}s`)}`,
+						description: "running",
+					});
+				}
+			}
+		}
+
 		// Node output — prefer nodeOutput (API) over logLines (stderr capture)
 		const nodeOutput = node?.nodeOutput ?? this.apiNodeOutputs.get(nodeId);
 		const logLines = node?.logLines ?? [];
@@ -860,9 +920,10 @@ class ArchonsDashboard implements Component {
 			const startIdx = outputLines.length - showLines.length;
 			for (let i = 0; i < showLines.length; i++) {
 				const lineNum = startIdx + i + 1;
-				const lineText = showLines[i].length > 70
-					? showLines[i].slice(0, 67) + "…"
-					: showLines[i];
+				const lineText =
+					showLines[i].length > 70
+						? showLines[i].slice(0, 67) + "…"
+						: showLines[i];
 				items.push({
 					value: `output:${lineNum}`,
 					label: th.fg("dim", ` ${String(lineNum).padStart(3)} │ ${lineText}`),
@@ -872,7 +933,10 @@ class ArchonsDashboard implements Component {
 			if (outputLines.length > 20) {
 				items.push({
 					value: "__output_more__",
-					label: th.fg("dim", `     … ${outputLines.length - 20} earlier lines`),
+					label: th.fg(
+						"dim",
+						`     … ${outputLines.length - 20} earlier lines`,
+					),
 					description: "",
 				});
 			}
@@ -887,9 +951,10 @@ class ArchonsDashboard implements Component {
 			const startIdx = logLines.length - showLines.length;
 			for (let i = 0; i < showLines.length; i++) {
 				const lineNum = startIdx + i + 1;
-				const lineText = showLines[i].length > 70
-					? showLines[i].slice(0, 67) + "…"
-					: showLines[i];
+				const lineText =
+					showLines[i].length > 70
+						? showLines[i].slice(0, 67) + "…"
+						: showLines[i];
 				items.push({
 					value: `log:${lineNum}`,
 					label: th.fg("dim", ` ${String(lineNum).padStart(3)} │ ${lineText}`),
@@ -929,7 +994,10 @@ class ArchonsDashboard implements Component {
 	}
 
 	// ── API enrichment ─────────────────────────────────────────
-	private async fetchApiNodeOutputs(runId: string | null, _nodeId: string): Promise<void> {
+	private async fetchApiNodeOutputs(
+		runId: string | null,
+		_nodeId: string,
+	): Promise<void> {
 		if (!runId) return;
 		try {
 			const outputs = await queryNodeOutputs(runId);
