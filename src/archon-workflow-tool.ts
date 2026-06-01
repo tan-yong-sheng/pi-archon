@@ -72,7 +72,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			"Use archon_workflow with action='cancel' to stop a running workflow by run ID.",
 			"Use archon_workflow with action='resume' to resume a failed or paused workflow run. Provide the run ID.",
 			"Use archon_workflow with action='approve' to approve a paused workflow at an approval gate. Provide the run ID and optionally a comment. The workflow auto-resumes after approval and its output is delivered as a user message.",
-			"Use archon_workflow with action='reject' to reject a paused workflow at an approval gate. Provide the run ID and optionally a reason. The CLI handles both rejection and optional on_reject resume within the same process.",
+			"Use archon_workflow with action='reject' to reject a paused workflow at an approval gate. Provide the run ID and a required reason (explaining why the user rejected it). The CLI handles both rejection and optional on_reject resume within the same process.",
 			"IMPORTANT — APPROVAL GATES REQUIRE HUMAN-IN-LOOP: When a workflow pauses at an approval gate, the pause notification arrives as a user message. You MUST ask the user whether they want to approve or reject — do NOT auto-approve or auto-cancel. Only execute approve/reject after the user explicitly says so.",
 			"When the user asks to create a new workflow, author the YAML in .archon/workflows/ first, then use archon_workflow run to launch it.",
 			"Archon workflows support conditional execution via 'when' expressions, 'trigger_rule' join semantics, structured output via 'output_format' (JSON Schema), approval gates, and loop iteration until completion.",
@@ -108,12 +108,10 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 						"Workflow name for 'run' and 'info' actions. Must match a .archon/workflows/*.yaml file.",
 				}),
 			),
-			reason: Type.Optional(
-				Type.String({
-					description:
-						"Reason for rejection (for 'reject' action). The on_reject prompt in the workflow will receive this.",
-				}),
-			),
+			reason: Type.String({
+				description:
+					"Reason for rejection (required for 'reject' action). The on_reject prompt in the workflow will receive this via $REJECTION_REASON.",
+			}),
 		}),
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			const { action, workflow, query, runId, comment, reason } = params;
@@ -859,8 +857,8 @@ async function handleResume(
 
 async function handleReject(
 	pi: ExtensionAPI,
-	runId?: string,
-	reason?: string,
+	runId: string,
+	reason: string,
 	cwd?: string,
 	ctx?: ToolCtx,
 ): Promise<{
@@ -870,6 +868,9 @@ async function handleReject(
 }> {
 	if (!runId) {
 		throw new Error("'runId' parameter is required for action='reject'");
+	}
+	if (!reason) {
+		throw new Error("'reason' parameter is required for action='reject'");
 	}
 
 	const projectCwd = cwd || process.cwd();
@@ -936,10 +937,7 @@ async function handleReject(
 	const { runArchonCommand } = await import("./archon-exec");
 	const startedAt = Date.now();
 
-	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree"];
-	if (reason) {
-		cliArgs.push(reason);
-	}
+	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree", reason];
 	const result = await runArchonCommand(pi, cliArgs, projectCwd);
 	const durationMs = Date.now() - startedAt;
 	const success = result.exitCode === 0;
@@ -969,7 +967,7 @@ async function handleReject(
 			action: "reject",
 			runId,
 			workflow: workflowName ?? "unknown",
-			reason: reason ?? undefined,
+			reason,
 			exitCode: result.exitCode,
 			durationMs,
 		},

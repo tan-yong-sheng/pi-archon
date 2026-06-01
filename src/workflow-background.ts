@@ -380,7 +380,7 @@ function runBackgroundCli(
 						pauseContent += `If the user approves, use:\n`;
 						pauseContent += `\`archon_workflow(action='approve', runId='${archonUuid}')\`\n\n`;
 						pauseContent += `If they want to reject, use:\n`;
-						pauseContent += `\`archon_workflow(action='reject', runId='${archonUuid}')\``;
+						pauseContent += `\`archon_workflow(action='reject', runId='${archonUuid}', reason='<why>')\`  (reason is required — ask the user why)`;
 
 						if (typeof (pi as any).sendUserMessage === "function") {
 							(pi as any).sendUserMessage(pauseContent, {
