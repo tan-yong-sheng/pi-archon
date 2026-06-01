@@ -347,6 +347,10 @@ export interface DagNodeInfo {
 	toolCalls: ToolCallRecord[];
 	/** Whether iteration sub-list is expanded in the UI */
 	iterationsExpanded?: boolean;
+	/** System event log lines (node started/completed, tool started/completed, approval) —
+	 *  rendered in the output panel as a granular activity log alongside AI streaming text.
+	 *  Populated from raw CLI stderr lines and SSE tool callbacks. */
+	systemEventLogs: string[];
 }
 
 export interface ToolActivity {

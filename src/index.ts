@@ -41,6 +41,7 @@ import {
 	buildArchonsCompletions,
 } from "./archons-command";
 import { registerArchonWorkflowTool } from "./archon-workflow-tool";
+import { registerGetWorkflowInfoTool } from "./get-workflow-info-tool";
 import { refreshProjectWorkflowNames } from "./workflow-discovery";
 import { ArchonMessagePanel } from "./ui/message-panel";
 
@@ -77,8 +78,11 @@ export default async function onEnable(api: ExtensionAPI): Promise<void> {
 			},
 		});
 
-		// Register the archon_workflow tool for AI agent use
+// Register the archon_workflow tool for AI agent use
 		registerArchonWorkflowTool(api);
+
+		// Register get_workflow_info tool — discover workflows with descriptions + full definitions
+		registerGetWorkflowInfoTool(api);
 
 		// Refresh workflow names on startup (best-effort)
 		void refreshProjectWorkflowNames(process.cwd()).catch(() => undefined);

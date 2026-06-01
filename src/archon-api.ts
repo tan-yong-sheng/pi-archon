@@ -226,6 +226,123 @@ export async function findLatestRunIdForWorkflow(
 	}
 }
 
+// ── Workflow discovery types ──────────────────────────────────
+
+export interface WorkflowInfo {
+	name: string;
+	description: string;
+	source: "project" | "bundled" | "global";
+	provider?: string;
+	model?: string;
+	nodeCount?: number;
+}
+
+export interface WorkflowDetail extends WorkflowInfo {
+	nodes: WorkflowNodeInfo[];
+	interactive?: boolean;
+	worktree?: { enabled?: boolean };
+}
+
+export interface WorkflowNodeInfo {
+	id: string;
+	type: string;
+	description?: string;
+	dependsOn?: string[];
+	when?: string;
+	triggerRule?: string;
+}
+
+// ── Workflow discovery API ────────────────────────────────────
+
+interface ApiWorkflowEntry {
+	workflow: {
+		name: string;
+		description: string;
+		provider?: string;
+		model?: string;
+		nodes?: Array<{
+			id?: string;
+			type?: string;
+			description?: string;
+			dependsOn?: string[];
+			when?: string;
+			trigger_rule?: string;
+		}>;
+		interactive?: boolean;
+		worktree?: { enabled?: boolean };
+	};
+	source: "project" | "bundled" | "global";
+}
+
+interface ApiWorkflowListResponse {
+	workflows: ApiWorkflowEntry[];
+	errors?: Array<{ filename: string; error: string }>;
+}
+
+interface ApiWorkflowGetResponse {
+	workflow: ApiWorkflowEntry["workflow"];
+	filename: string;
+	source: ApiWorkflowEntry["source"];
+}
+
+/**
+ * List all available workflows with name + description from the Archon REST API.
+ * Returns undefined if the server is not running.
+ */
+export async function listWorkflowsWithDetails(
+	projectCwd?: string,
+): Promise<WorkflowInfo[] | undefined> {
+	const query = projectCwd ? `?cwd=${encodeURIComponent(projectCwd)}` : "";
+	const result = await apiFetch<ApiWorkflowListResponse>(
+		`/api/workflows${query}`,
+	);
+	if (!result) return undefined;
+	if (!Array.isArray(result.workflows)) return undefined;
+
+	return result.workflows.map((entry) => ({
+		name: entry.workflow.name,
+		description: entry.workflow.description,
+		source: entry.source,
+		provider: entry.workflow.provider,
+		model: entry.workflow.model,
+		nodeCount: entry.workflow.nodes?.length,
+	}));
+}
+
+/**
+ * Get full details for a specific workflow by name from the Archon REST API.
+ * Returns undefined if the server is not running or the workflow doesn't exist.
+ */
+export async function getWorkflowInfo(
+	name: string,
+	projectCwd?: string,
+): Promise<WorkflowDetail | undefined> {
+	const query = projectCwd ? `?cwd=${encodeURIComponent(projectCwd)}` : "";
+	const result = await apiFetch<ApiWorkflowGetResponse>(
+		`/api/workflows/${encodeURIComponent(name)}${query}`,
+	);
+	if (!result || !result.workflow) return undefined;
+
+	return {
+		name: result.workflow.name,
+		description: result.workflow.description,
+		source: result.source,
+		provider: result.workflow.provider,
+		model: result.workflow.model,
+		nodeCount: result.workflow.nodes?.length,
+		nodes: (result.workflow.nodes ?? []).map((n) => ({
+			id: n.id ?? "unknown",
+			type: n.type ?? "unknown",
+			description: n.description,
+			dependsOn: n.dependsOn,
+			when: n.when,
+			triggerRule: n.trigger_rule,
+		})),
+		interactive: result.workflow.interactive,
+		worktree: result.workflow.worktree,
+	};
+}
+
 /**
  * Check if the Archon Web server is reachable.
  */

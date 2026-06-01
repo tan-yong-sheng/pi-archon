@@ -18,6 +18,8 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import type { TUI, Theme, OverlayHandle } from "@mariozechner/pi-tui";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { DagProgressTracker } from "./dag-tracker";
@@ -93,8 +95,6 @@ export function getActiveRun(runId: string): ActiveWorkflowRun | undefined {
 
 function resolveArchonBin(_cwd: string): { cmd: string; args: string[] } {
 	// Reuse the same logic as archon-exec.ts
-	const fs = require("node:fs");
-	const path = require("node:path");
 	const archonRoot = process.env.ARCHON_ROOT || "/opt/archon";
 	if (fs.existsSync(path.join(archonRoot, "package.json"))) {
 		return { cmd: "bun", args: ["run", "cli"] };
@@ -105,23 +105,26 @@ function resolveArchonBin(_cwd: string): { cmd: string; args: string[] } {
 // ── Non-blocking runner ──────────────────────────────────────
 
 /**
- * Start a workflow in the background with a live overlay popup.
- * Returns immediately — the workflow runs asynchronously.
+ * Shared infrastructure: launch an archon CLI command in the background with
+ * a live overlay popup, SSE streaming, and automatic result delivery.
  *
- * @returns A unique run ID for tracking.
+ * This is the core engine used by runWorkflowBackground, resumeWorkflowBackground,
+ * and approveWorkflowBackground. All three construct CLI args and call here.
+ *
+ * @returns A unique local run ID for tracking, or null if no UI.
  */
-export function runWorkflowBackground(
+function runBackgroundCli(
 	pi: ExtensionAPI,
 	workflow: WorkflowName,
 	query: string,
+	cliArgs: string[],
 	ctx: ExtensionCommandContext,
 ): string | null {
 	if (!ctx.hasUI) {
-		// No UI — fall back to synchronous execution
 		return null;
 	}
 
-	const runId = nextRunId();
+	const localRunId = nextRunId();
 	const cwd = ctx.cwd || process.cwd();
 	const tracker = new DagProgressTracker();
 	const queryPreview = query.length > 72 ? `${query.slice(0, 72)}…` : query;
@@ -132,6 +135,7 @@ export function runWorkflowBackground(
 		startedAt: Date.now(),
 		tracker,
 	};
+	activeRuns.set(localRunId, entry);
 
 	// Use ctx.ui.custom to get access to tui.showOverlay.
 	// The controller component immediately creates the overlay and calls done(),
@@ -149,7 +153,7 @@ export function runWorkflowBackground(
 						queryPreview,
 						dagTracker: tracker,
 						onCancel: () => {
-							void cancelRun(runId);
+							void cancelRun(localRunId);
 						},
 					},
 					theme,
@@ -163,20 +167,12 @@ export function runWorkflowBackground(
 					margin: { top: 1, right: 2 },
 				});
 				entry.overlayHandle = handle;
-				overlay.setOverlayHandle(handle);
 
 				// ── Spawn the archon CLI subprocess ──────────────
 				const { cmd, args: baseArgs } = resolveArchonBin(cwd);
-				const cliArgs = [
-					...baseArgs,
-					"workflow",
-					"run",
-					workflow,
-					query.trim(),
-					"--no-worktree",
-				];
+				const fullArgs = [...baseArgs, ...cliArgs];
 
-				const proc = spawn(cmd, cliArgs, {
+				const proc = spawn(cmd, fullArgs, {
 					cwd,
 					env: { ...process.env },
 					stdio: ["ignore", "pipe", "pipe"],
@@ -191,15 +187,21 @@ export function runWorkflowBackground(
 					const text = chunk.toString("utf-8");
 					stdoutBuf += text;
 					const lines = text.split(/\n/);
+					let hadDagEvent = false;
 					for (const line of lines) {
 						if (!line.trim()) continue;
 						const event = tryParseDagEvent(line);
 						if (event) {
 							tracker.applyEvent(event);
+							hadDagEvent = true;
 						} else {
 							// Non-DAG stdout line → capture as node log
 							tracker.appendLogLine(line);
 						}
+					}
+					// Trigger render so node state changes from JSON DAG events appear promptly
+					if (hadDagEvent) {
+						tui.requestRender();
 					}
 				});
 
@@ -207,15 +209,33 @@ export function runWorkflowBackground(
 					const text = chunk.toString("utf-8");
 					stderrBuf += text;
 					const lines = text.split(/\n/);
+					let hadDagEvent = false;
 					for (const line of lines) {
 						if (!line.trim()) continue;
 						const event = tryParseDagEvent(line);
 						if (event) {
 							tracker.applyEvent(event);
+							hadDagEvent = true;
+							// Also capture the raw DAG event line as a granular system event
+							const nodeId =
+								"stepName" in event
+									? (event as { stepName: string }).stepName
+									: "nodeId" in event
+										? (event as { nodeId: string }).nodeId
+										: undefined;
+							if (nodeId && typeof nodeId === "string") {
+								tracker.appendSystemEvent(nodeId, line.trim());
+							}
 						} else {
 							// Non-DAG stderr line (node output, status text) → node log
 							tracker.appendLogLine(line);
 						}
+					}
+					// Trigger render after processing stderr DAG events so system events
+					// and node state transitions appear immediately, not waiting for the
+					// next pollTimer tick (which stops after workflow completes).
+					if (hadDagEvent) {
+						tui.requestRender();
 					}
 				});
 
@@ -229,13 +249,14 @@ export function runWorkflowBackground(
 				// ── Status bar sync ──────────────────────────────
 				const statusTimer = setInterval(() => {
 					if (tracker.workflowDone) return;
-					const progress = tracker.progressSummary(
-						Math.floor((Date.now() - entry.startedAt) / 1000),
-					);
-					ctx.ui.setStatus?.(
-						STATUS_KEY_RUNNING,
-						`◆ archon ${workflow} ${progress}`,
-					);
+					const elapsed = Math.floor((Date.now() - entry.startedAt) / 1000);
+					const progress = tracker.progressSummary(elapsed);
+					const statusText = `◆ archon ${workflow} ${progress}`;
+					ctx.ui.setStatus?.(STATUS_KEY_RUNNING, statusText);
+					// Show a live grey notice in the main terminal area
+					ctx.ui.setWidget?.(STATUS_KEY_RUNNING, [
+						`◇ archon ${workflow} running · ${fmtElapsed(elapsed)}`,
+					]);
 				}, PROGRESS_UPDATE_MS);
 				entry.statusTimer = statusTimer;
 
@@ -376,10 +397,10 @@ export function runWorkflowBackground(
 						);
 
 						convSSE.onText = (content) => {
-							// Append streaming AI text to the currently-running node
-							// Use BOTH streamingText (for structured display) and logLines (for fallback)
+							// Append streaming AI text to the currently-running node.
+							// streamingText is the primary display surface in the overlay output panel;
+							// logLines is for subprocess stdout/stderr only (no duplication).
 							tracker.appendStreamingTextToCurrent(content);
-							tracker.appendLogLine(content);
 							tui.requestRender();
 						};
 
@@ -388,13 +409,9 @@ export function runWorkflowBackground(
 							const nodeId = tracker.currentRunningNodeId;
 							if (nodeId) {
 								tracker.startToolCall(nodeId, name, input, toolCallId);
+								// Log system event for granular display
+								tracker.appendSystemEvent(nodeId, `↳ tool: ${name} (started)`);
 							}
-							// Also keep log line for fallback
-							const inputStr =
-								Object.keys(input).length > 0
-									? ` ${JSON.stringify(input).slice(0, 60)}`
-									: "";
-							tracker.appendLogLine(`⟳ ${name}${inputStr}`);
 							tui.requestRender();
 						};
 
@@ -402,16 +419,23 @@ export function runWorkflowBackground(
 							// Complete the structured tool call record on the running node
 							const nodeId = tracker.currentRunningNodeId;
 							if (nodeId) {
-								tracker.completeToolCall(nodeId, name, output, duration, toolCallId);
+								tracker.completeToolCall(
+									nodeId,
+									name,
+									output,
+									duration,
+									toolCallId,
+								);
+								// Log system event for granular display
+								const durStr =
+									duration > 1000
+										? `${Math.round(duration / 100) / 10}s`
+										: `${duration}ms`;
+								tracker.appendSystemEvent(
+									nodeId,
+									`↳ tool: ${name} (${durStr})`,
+								);
 							}
-							// Also keep log line for fallback
-							const durStr =
-								duration > 1000
-									? `${Math.round(duration / 100) / 10}s`
-									: `${duration}ms`;
-							const outputPreview =
-								output.length > 80 ? `${output.slice(0, 80)}…` : output;
-							tracker.appendLogLine(`✓ ${name} (${durStr}): ${outputPreview}`);
 							tui.requestRender();
 						};
 
@@ -461,6 +485,7 @@ export function runWorkflowBackground(
 					setTimeout(() => {
 						handle.hide();
 						ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+						ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
 					}, 1200);
 
 					// Post result as a chat message
@@ -537,24 +562,32 @@ export function runWorkflowBackground(
 						resultContent += `\n\n## Artifacts\n${section}`;
 					}
 
-					// Post the main result message (use "steer" to deliver immediately,
-					// not "nextTurn" which waits for the next user prompt)
-					pi.sendMessage?.(
-						{
-							customType: "archon",
-							content: resultContent,
-							display: true,
-							details: {
-								workflow,
-								query,
-								exitCode: runResult.exitCode,
-								durationMs,
-								artifacts,
-								pill: toPillLabel(workflow),
+					// Inject result as a user message so the agent processes it.
+					// Uses followUp to queue after any in-progress assistant response.
+					// If sendUserMessage isn't available (older pi), falls back to
+					// sendMessage for display-only delivery.
+					if (typeof (pi as any).sendUserMessage === "function") {
+						(pi as any).sendUserMessage(resultContent, {
+							deliverAs: "followUp",
+						});
+					} else {
+						pi.sendMessage?.(
+							{
+								customType: "archon",
+								content: resultContent,
+								display: true,
+								details: {
+									workflow,
+									query,
+									exitCode: runResult.exitCode,
+									durationMs,
+									artifacts,
+									pill: toPillLabel(workflow),
+								},
 							},
-						},
-						{ deliverAs: "steer" },
-					);
+							{ deliverAs: "steer" },
+						);
+					}
 
 					// Toast notification
 					ctx.ui.notify?.(
@@ -565,7 +598,7 @@ export function runWorkflowBackground(
 					);
 
 					// Remove from active runs
-					activeRuns.delete(runId);
+					activeRuns.delete(localRunId);
 
 					// Notify completion callback (used by /archons)
 					entry.onComplete?.(outcome);
@@ -586,32 +619,40 @@ export function runWorkflowBackground(
 					setTimeout(() => {
 						handle.hide();
 						ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+						ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
 					}, 1200);
 
-					pi.sendMessage?.(
-						{
-							customType: "archon",
-							content: `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`,
-							display: true,
-							details: {
-								workflow,
-								query,
-								error: err.message,
-								durationMs,
-								pill: toPillLabel(workflow),
+					const errorContent = `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`;
+					if (typeof (pi as any).sendUserMessage === "function") {
+						(pi as any).sendUserMessage(errorContent, {
+							deliverAs: "followUp",
+						});
+					} else {
+						pi.sendMessage?.(
+							{
+								customType: "archon",
+								content: errorContent,
+								display: true,
+								details: {
+									workflow,
+									query,
+									error: err.message,
+									durationMs,
+									pill: toPillLabel(workflow),
+								},
 							},
-						},
-						{ deliverAs: "steer" },
-					);
+							{ deliverAs: "steer" },
+						);
+					}
 					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
-					activeRuns.delete(runId);
+					activeRuns.delete(localRunId);
 				});
 
 				// Register in active runs map
-				activeRuns.set(runId, entry);
+				activeRuns.set(localRunId, entry);
 
 				// Return immediately — the overlay and subprocess live on
-				done(runId);
+				done(localRunId);
 				return overlay;
 			},
 			{
@@ -625,11 +666,80 @@ export function runWorkflowBackground(
 		)
 		.catch(() => {
 			// ctx.ui.custom() itself failed — unlikely but handle gracefully
-			activeRuns.delete(runId);
+			activeRuns.delete(localRunId);
 			return null;
 		});
 
-	return runId;
+	return localRunId;
+}
+
+// ── Public wrappers ───────────────────────────────────────────
+
+/**
+ * Start a workflow in the background with a live overlay popup.
+ * Returns immediately — the workflow runs asynchronously.
+ *
+ * @returns A unique local run ID for tracking.
+ */
+export function runWorkflowBackground(
+	pi: ExtensionAPI,
+	workflow: WorkflowName,
+	query: string,
+	ctx: ExtensionCommandContext,
+): string | null {
+	const cliArgs = ["workflow", "run", workflow, query.trim(), "--no-worktree"];
+	return runBackgroundCli(pi, workflow, query, cliArgs, ctx);
+}
+
+/**
+ * Resume a failed or paused workflow run in the background.
+ * Resolves the run's workflow name via API, then spawns
+ * `archon workflow resume <runId>` with overlay/SSE.
+ *
+ * The resumed workflow's output is delivered via sendUserMessage
+ * on completion, just like run.
+ */
+export function resumeWorkflowBackground(
+	pi: ExtensionAPI,
+	runId: string,
+	workflowName: string,
+	ctx: ExtensionCommandContext,
+): string | null {
+	const cliArgs = ["workflow", "resume", runId];
+	return runBackgroundCli(
+		pi,
+		workflowName,
+		`resume ${runId.slice(0, 12)}`,
+		cliArgs,
+		ctx,
+	);
+}
+
+/**
+ * Approve a paused workflow run in the background.
+ * Resolves the run's workflow name via API, then spawns
+ * `archon workflow approve <runId> [comment]` with overlay/SSE.
+ *
+ * After approval the workflow auto-resumes. The resumed output
+ * is delivered via sendUserMessage on completion.
+ */
+export function approveWorkflowBackground(
+	pi: ExtensionAPI,
+	runId: string,
+	workflowName: string,
+	comment: string | undefined,
+	ctx: ExtensionCommandContext,
+): string | null {
+	const cliArgs = comment
+		? ["workflow", "approve", runId, comment]
+		: ["workflow", "approve", runId];
+	return runBackgroundCli(
+		pi,
+		workflowName,
+		comment ? `approve: ${comment.slice(0, 60)}` : "approve",
+		cliArgs,
+		ctx,
+	);
 }
 
 // ── Cancel a running workflow ────────────────────────────────

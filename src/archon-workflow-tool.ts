@@ -6,15 +6,20 @@
  *   - list:    Return available workflows in .archon/workflows/
  *   - status:  Return active/recent run status with node states
  *   - cancel:  Cancel a running workflow
+ *   - resume:  Resume a failed or paused workflow run
+ *   - approve: Approve a paused workflow at an approval gate
  *
  * The AI agent uses this tool to:
  * 1. Discover available workflows (list)
  * 2. Launch workflows it authored or the user requested (run)
  * 3. Monitor progress of running workflows (status)
  * 4. Cancel workflows when needed (cancel)
+ * 5. Resume failed/paused workflows (resume)
+ * 6. Approve at approval gates to continue execution (approve)
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 
 // StringEnum is not available from pi-ai in this environment,
@@ -30,10 +35,13 @@ function StringEnum<T extends readonly string[]>(
 }
 import {
 	runWorkflowBackground,
+	resumeWorkflowBackground,
+	approveWorkflowBackground,
 	cancelRun,
 	getActiveRuns,
 } from "./workflow-background";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
+import { listWorkflowsWithDetails, getRunDetail } from "./archon-api";
 import { queryRecentRuns, type WorkflowRunRecord } from "./artifact-query";
 import { cancelArchonWorkflowRun } from "./workflow-ops";
 import { fmtElapsed } from "./ui/workflow-overlay";
@@ -52,18 +60,26 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			"structured output (output_format), loop iteration, approval gates, and parallel fan-out.",
 		promptSnippet: "Run or manage Archon workflows",
 		promptGuidelines: [
-			"Use archon_workflow with action='list' to discover available workflows before running one.",
-			"Use archon_workflow with action='run' to launch a workflow. Provide the workflow name and a query string.",
-			"Use archon_workflow with action='status' to check on running or recently completed workflows.",
+			"To DISCOVER available workflows with descriptions, use get_workflow_info(action='list') instead — it shows workflow descriptions grouped by source (project/global/bundled).",
+			"To INSPECT a specific workflow's node DAG and full definition, use get_workflow_info(action='info', workflow='name').",
+			"Use archon_workflow with action='run' to launch a workflow. Provide the workflow name and a query string. The agent turn ends immediately after launching (terminate: true) — the workflow runs in the background and its result is automatically injected as a user message when complete.",
+			"After a workflow launch, the result arrives as a user message — process it, extract key information, and present it to the user. Do NOT ignore completion messages.",
+			"Use archon_workflow with action='status' to check on running or recently completed workflows. Returns node states, durations, and errors.",
 			"Use archon_workflow with action='cancel' to stop a running workflow by run ID.",
+			"Use archon_workflow with action='resume' to resume a failed or paused workflow run. Provide the run ID.",
+			"Use archon_workflow with action='approve' to approve a paused workflow at an approval gate. Provide the run ID and optionally a comment. The workflow auto-resumes after approval and its output is delivered as a user message.",
 			"When the user asks to create a new workflow, author the YAML in .archon/workflows/ first, then use archon_workflow run to launch it.",
 			"Archon workflows support conditional execution via 'when' expressions, 'trigger_rule' join semantics, structured output via 'output_format' (JSON Schema), approval gates, and loop iteration until completion.",
 		],
 		parameters: Type.Object({
-			action: StringEnum(["run", "list", "status", "cancel"] as const, {
-				description:
-					"Action: 'run' to launch, 'list' to discover, 'status' to check, 'cancel' to stop",
-			}),
+			action: StringEnum(
+				["run", "list", "status", "cancel", "resume", "approve"] as const,
+				{
+					description:
+						"Action: 'run' to launch, 'list' to discover, 'status' to check, 'cancel' to stop, " +
+						"'resume' to resume a failed/paused run, 'approve' to approve at an approval gate",
+				},
+			),
 			workflow: Type.Optional(
 				Type.String({
 					description:
@@ -76,15 +92,21 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 						"Query/prompt for the workflow run (for 'run' action). Passed as $ARGUMENTS to the workflow.",
 				}),
 			),
+			comment: Type.Optional(
+				Type.String({
+					description:
+						"Optional comment for 'approve' action (passed as comment to the approval gate).",
+				}),
+			),
 			runId: Type.Optional(
 				Type.String({
 					description:
-						"Run ID to check or cancel (for 'status' and 'cancel' actions).",
+						"Run ID to check, cancel, resume, or approve (for 'status', 'cancel', 'resume', and 'approve' actions).",
 				}),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-			const { action, workflow, query, runId } = params;
+			const { action, workflow, query, runId, comment } = params;
 			const cwd = ctx?.cwd || process.cwd();
 
 			switch (action) {
@@ -94,13 +116,17 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					return await handleList(cwd);
 				case "status":
 					return await handleStatus(pi, runId, cwd);
+				case "resume":
+					return await handleResume(pi, runId, cwd, ctx);
+				case "approve":
+					return await handleApprove(pi, runId, comment, cwd, ctx);
 				case "cancel":
 					return await handleCancel(pi, runId, cwd);
 				default:
 					throw new Error(`Unknown action: ${action}`);
 			}
 		},
-		renderCall(args, theme, _context) {
+		renderCall(args, theme, context) {
 			const action = args.action ?? "unknown";
 			const target = args.workflow ?? args.runId ?? "";
 			const actionLabels: Record<string, string> = {
@@ -108,71 +134,119 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 				list: "☰ List",
 				status: "◎ Status",
 				cancel: "✕ Cancel",
+				resume: "↻ Resume",
+				approve: "✓ Approve",
 			};
 			const label = actionLabels[action] ?? action;
-			return [
+			const parts = [
 				theme.fg("accent", `◆ archon ${label}`) +
 					(target ? ` ${theme.bold(target)}` : ""),
 				args.query
 					? theme.fg("dim", `  ${String(args.query).slice(0, 80)}`)
 					: undefined,
-			].filter(Boolean);
+			].filter(Boolean) as string[];
+			const text = context.lastComponent ?? new Text("", 0, 0);
+			text.setText(parts.join("\n"));
+			return text;
 		},
-		renderResult(result, _options, theme, _context) {
-			const text =
+		renderResult(result, _options, theme, context) {
+			const contentText =
 				result.content
 					?.filter((c: { type: string }) => c.type === "text")
 					.map((c: { text: string }) => c.text)
 					.join("\n") ?? "";
 			const details = result.details as Record<string, unknown> | undefined;
 			const action = String(details?.action ?? "unknown");
+			let lines: string[] = [];
 			// Compact summary for the result card
 			if (action === "list") {
-				const workflows = details?.workflows as string[] | undefined;
+				const workflows = details?.workflows as
+					| Array<{ name: string; description?: string; source?: string }>
+					| string[]
+					| undefined;
 				const count = workflows?.length ?? 0;
-				return [
+				lines = [
 					theme.fg("accent", `◆ archon ▸ ${count} workflow(s) available`),
-					...(workflows?.map((w: string) => theme.fg("dim", `  ▸ ${w}`)) ?? []),
+					...(workflows?.map((w: unknown) => {
+						const name =
+							typeof w === "string" ? w : (w as { name: string }).name;
+						return theme.fg("dim", `  ▸ ${name}`);
+					}) ?? []),
 				];
-			}
-			if (action === "status") {
+			} else if (action === "status") {
 				const active = details?.activeCount as number | undefined;
 				const recent = details?.recentCount as number | undefined;
-				return [
+				lines = [
 					theme.fg("accent", `◆ archon ▸ status`),
 					theme.fg("dim", `  Active: ${active ?? 0} · Recent: ${recent ?? 0}`),
 				];
-			}
-			if (action === "cancel") {
-				return [
+			} else if (action === "cancel") {
+				lines = [
 					theme.fg("warning", `◆ archon ▸ cancelled`),
 					theme.fg("dim", `  ${String(details?.runId ?? "")}`),
 				];
-			}
-			// run result — show completion summary
-			if (action === "run") {
+			} else if (action === "resume") {
+				const runIdStr = String(details?.runId ?? "");
+				lines = [
+					theme.fg("accent", `◆ archon ▸ resumed`),
+					theme.fg(
+						"dim",
+						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 24)}`,
+					),
+				];
+			} else if (action === "approve") {
+				const runIdStr = String(details?.runId ?? "");
+				lines = [
+					theme.fg("success", `◆ archon ▸ approved`),
+					theme.fg(
+						"dim",
+						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 24)}${details?.comment ? ` · ${String(details?.comment).slice(0, 60)}` : ""}`,
+					),
+				];
+			} else if (action === "run") {
+				const launched = details?.launched === true;
 				const exitCode = details?.exitCode as number | undefined;
 				const durationMs = details?.durationMs as number | undefined;
 				const duration = durationMs
 					? fmtElapsed(Math.floor(durationMs / 1000))
 					: "";
-				const success = exitCode === 0;
-				return [
-					theme.fg(
-						success ? "success" : "error",
-						`◆ archon ▸ ${success ? "completed" : "failed"}`,
-					),
-					theme.fg(
-						"dim",
-						`  ${String(details?.workflow ?? "")} · ${duration}${exitCode !== 0 ? ` · exit ${exitCode}` : ""}`,
-					),
-					text.length > 0
-						? theme.fg("dim", `  ${text.slice(0, 200).split("\n")[0]}`)
-						: undefined,
-				].filter(Boolean);
+				if (launched) {
+					// Background launch — no exit code yet, show as launched
+					const runId = String(details?.runId ?? "");
+					lines = [
+						theme.fg("accent", `◆ archon ▸ launched`),
+						theme.fg(
+							"dim",
+							`  ${String(details?.workflow ?? "")} · ${runId.slice(0, 24)}`,
+						),
+						contentText.length > 0
+							? theme.fg("dim", `  ${contentText.slice(0, 200).split("\n")[0]}`)
+							: undefined,
+					].filter(Boolean) as string[];
+				} else {
+					// Synchronous completion (or file-based execution) — exitCode is known
+					const success = exitCode === 0;
+					lines = [
+						theme.fg(
+							success ? "success" : "error",
+							`◆ archon ▸ ${success ? "completed" : "failed"}`,
+						),
+						theme.fg(
+							"dim",
+							`  ${String(details?.workflow ?? "")} · ${duration}${exitCode !== 0 ? ` · exit ${exitCode}` : ""}`,
+						),
+						contentText.length > 0
+							? theme.fg("dim", `  ${contentText.slice(0, 200).split("\n")[0]}`)
+							: undefined,
+					].filter(Boolean) as string[];
+				}
+			} else {
+				// Fallback
+				lines = [theme.fg("dim", contentText.slice(0, 200))];
 			}
-			// Fallback
-			return [theme.fg("dim", text.slice(0, 200))];
+			const text = context.lastComponent ?? new Text("", 0, 0);
+			text.setText(lines.join("\n"));
+			return text;
 		},
 	});
 }
@@ -216,14 +290,18 @@ async function handleRun(
 	if (ctx?.hasUI && ctx.ui) {
 		const runId = runWorkflowBackground(pi, workflow, queryText, ctx as never);
 		if (runId) {
-			// Workflow launched in background — return immediately
+			// Workflow launched in background — return immediately.
+			// terminate: true stops the agent loop — the workflow runs
+			// independently. The result is injected as a user message
+			// via sendUserMessage when it completes.
 			return {
 				content: [
 					{
 						type: "text",
 						text:
 							`Workflow **${workflow}** launched in background (run ID: ${runId}). ` +
-							`Use \`archon_workflow(action="status")\` to check progress, or /archons dashboard to monitor visually.`,
+							`The result will be delivered automatically. ` +
+							`Use \`archon_workflow(action="status")\` to check progress, or /archons dashboard.`,
 					},
 				],
 				details: {
@@ -232,6 +310,7 @@ async function handleRun(
 					runId,
 					launched: true,
 				},
+				terminate: true,
 			};
 		}
 	}
@@ -287,20 +366,67 @@ async function handleRun(
 	};
 }
 
-async function handleList(
-	cwd?: string,
-): Promise<{
+async function handleList(cwd?: string): Promise<{
 	content: { type: string; text: string }[];
 	details: Record<string, unknown>;
 }> {
-	const workflows = readProjectWorkflowNamesFromDisk(cwd || process.cwd());
+	const projectCwd = cwd || process.cwd();
 
-	const lines = [`## Available Workflows (${workflows.length})`, ""];
-	if (workflows.length === 0) {
+	// Try REST API first (rich data with descriptions)
+	const apiWorkflows = await listWorkflowsWithDetails(projectCwd);
+
+	if (apiWorkflows && apiWorkflows.length > 0) {
+		const lines = [`## Available Workflows (${apiWorkflows.length})`, ""];
+
+		const sourceOrder: string[] = ["project", "global", "bundled"];
+		const sourceLabels: Record<string, string> = {
+			project: "Project",
+			global: "Global",
+			bundled: "Bundled",
+		};
+
+		for (const source of sourceOrder) {
+			const group = apiWorkflows.filter((w) => w.source === source);
+			if (group.length === 0) continue;
+
+			lines.push(`### ${sourceLabels[source] ?? source} (${group.length})`);
+			lines.push("");
+
+			for (const w of group) {
+				const desc = w.description
+					.split("\n")[0]
+					.replace(/^Use when:\s*/i, "")
+					.trim();
+				const modelTag = w.model ? ` [${w.model}]` : "";
+				const providerTag = w.provider ? ` via ${w.provider}` : "";
+				lines.push(`- **\`${w.name}\`**${modelTag} — ${desc}${providerTag}`);
+			}
+			lines.push("");
+		}
+
+		return {
+			content: [{ type: "text", text: lines.join("\n") }],
+			details: {
+				action: "list",
+				workflows: apiWorkflows,
+			},
+		};
+	}
+
+	// Fallback: read names from disk (no descriptions)
+	const names = readProjectWorkflowNamesFromDisk(projectCwd);
+
+	const lines = [
+		`## Available Workflows (${names.length})`,
+		"",
+		"_Descriptions unavailable — Archon server not running. Start with `archon serve` for rich workflow info._",
+		"",
+	];
+	if (names.length === 0) {
 		lines.push("No workflows found in `.archon/workflows/`.");
 		lines.push("Create a workflow YAML file to get started.");
 	} else {
-		for (const name of workflows) {
+		for (const name of names) {
 			lines.push(`- \`${name}\``);
 		}
 	}
@@ -310,7 +436,11 @@ async function handleList(
 		content: [{ type: "text", text: lines.join("\n") }],
 		details: {
 			action: "list",
-			workflows,
+			workflows: names.map((n) => ({
+				name: n,
+				description: "",
+				source: "project" as const,
+			})),
 		},
 	};
 }
@@ -508,6 +638,213 @@ async function handleStatus(
 			action: "status",
 			activeCount: activeRuns.size,
 			recentCount: recentRuns.length,
+		},
+	};
+}
+
+async function handleResume(
+	pi: ExtensionAPI,
+	runId?: string,
+	cwd?: string,
+	ctx?: ToolCtx,
+): Promise<{
+	content: { type: string; text: string }[];
+	details: Record<string, unknown>;
+	terminate?: boolean;
+}> {
+	if (!runId) {
+		throw new Error("'runId' parameter is required for action='resume'");
+	}
+
+	const projectCwd = cwd || process.cwd();
+
+	// Try to resolve the workflow name from active runs first
+	const activeEntry = getActiveRuns().get(runId);
+	let workflowName = activeEntry?.workflowName;
+
+	// If not in active runs, try the API
+	if (!workflowName) {
+		try {
+			const detail = await getRunDetail(runId);
+			if (detail) {
+				workflowName = detail.run.workflow_name;
+			}
+		} catch {
+			// Best-effort
+		}
+	}
+
+	// Fall back to synchronous CLI if no UI, or launch in background
+	if (ctx?.hasUI && ctx.ui && workflowName) {
+		const localRunId = resumeWorkflowBackground(
+			pi,
+			runId,
+			workflowName,
+			ctx as never,
+		);
+		if (localRunId) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`Workflow **${workflowName}** (${runId}) resumed in background. ` +
+							`The result will be delivered automatically. ` +
+							`Use \`archon_workflow(action="status")\` to check progress, or /archons dashboard.`,
+					},
+				],
+				details: {
+					action: "resume",
+					runId,
+					workflow: workflowName,
+				},
+				terminate: false,
+			};
+		}
+	}
+
+	// Fallback: synchronous CLI execution
+	const { runArchonCommand } = await import("./archon-exec");
+	const startedAt = Date.now();
+	const result = await runArchonCommand(
+		pi,
+		["workflow", "resume", runId],
+		projectCwd,
+	);
+	const durationMs = Date.now() - startedAt;
+	const success = result.exitCode === 0;
+
+	return {
+		content: [
+			{
+				type: "text",
+				text: [
+					`## Resume Result — ${runId}`,
+					"",
+					`- **Status:** ${success ? "✅ completed" : "❌ failed"}`,
+					`- **Duration:** ${Math.round(durationMs / 1000)}s`,
+					result.exitCode !== 0 && result.stderr
+						? `- **Error:** ${result.stderr.slice(0, 500)}`
+						: "",
+					result.stdout
+						? `\`\`\`text\n${result.stdout.slice(0, 1000)}\n\`\`\``
+						: "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+			},
+		],
+		details: {
+			action: "resume",
+			runId,
+			workflow: workflowName ?? "unknown",
+			exitCode: result.exitCode,
+			durationMs,
+		},
+	};
+}
+
+async function handleApprove(
+	pi: ExtensionAPI,
+	runId?: string,
+	comment?: string,
+	cwd?: string,
+	ctx?: ToolCtx,
+): Promise<{
+	content: { type: string; text: string }[];
+	details: Record<string, unknown>;
+	terminate?: boolean;
+}> {
+	if (!runId) {
+		throw new Error("'runId' parameter is required for action='approve'");
+	}
+
+	const projectCwd = cwd || process.cwd();
+
+	// Try to resolve the workflow name from active runs first
+	const activeEntry = getActiveRuns().get(runId);
+	let workflowName = activeEntry?.workflowName;
+
+	// If not in active runs, try the API
+	if (!workflowName) {
+		try {
+			const detail = await getRunDetail(runId);
+			if (detail) {
+				workflowName = detail.run.workflow_name;
+			}
+		} catch {
+			// Best-effort
+		}
+	}
+
+	// Launch in background if UI available
+	if (ctx?.hasUI && ctx.ui && workflowName) {
+		const localRunId = approveWorkflowBackground(
+			pi,
+			runId,
+			workflowName,
+			comment,
+			ctx as never,
+		);
+		if (localRunId) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`Workflow **${workflowName}** (${runId}) approved${comment ? `: ${comment}` : ""}. ` +
+							`Auto-resuming in background. The result will be delivered automatically.`,
+					},
+				],
+				details: {
+					action: "approve",
+					runId,
+					workflow: workflowName,
+					comment: comment ?? undefined,
+				},
+				terminate: false,
+			};
+		}
+	}
+
+	// Fallback: synchronous CLI execution
+	const { runArchonCommand } = await import("./archon-exec");
+	const startedAt = Date.now();
+	const approveCliArgs = comment
+		? ["workflow", "approve", runId, comment]
+		: ["workflow", "approve", runId];
+	const result = await runArchonCommand(pi, approveCliArgs, projectCwd);
+	const durationMs = Date.now() - startedAt;
+	const success = result.exitCode === 0;
+
+	return {
+		content: [
+			{
+				type: "text",
+				text: [
+					`## Approve Result — ${runId}`,
+					"",
+					`- **Status:** ${success ? "✅ approved" : "❌ failed"}`,
+					`- **Duration:** ${Math.round(durationMs / 1000)}s`,
+					comment ? `- **Comment:** ${comment}` : "",
+					result.exitCode !== 0 && result.stderr
+						? `- **Error:** ${result.stderr.slice(0, 500)}`
+						: "",
+					result.stdout
+						? `\`\`\`text\n${result.stdout.slice(0, 1000)}\n\`\`\``
+						: "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+			},
+		],
+		details: {
+			action: "approve",
+			runId,
+			workflow: workflowName ?? "unknown",
+			comment: comment ?? undefined,
+			exitCode: result.exitCode,
+			durationMs,
 		},
 	};
 }

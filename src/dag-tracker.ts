@@ -275,6 +275,23 @@ export class DagProgressTracker {
 	}
 
 	/**
+	 * Append a system event text line to a specific node's systemEventLogs.
+	 * System events are granular CLI stderr lines ("[hello] Started",
+	 * "[tool_started] tool: read_file (started)", etc.) and SSE-derived
+	 * tool status lines. They're rendered in the output panel as a dim
+	 * activity log alongside AI streaming text.
+	 */
+	appendSystemEvent(nodeId: string, text: string): void {
+		if (this.#workflowDone) return;
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		node.systemEventLogs.push(text);
+		if (node.systemEventLogs.length > 100) {
+			node.systemEventLogs.splice(0, node.systemEventLogs.length - 100);
+		}
+	}
+
+	/**
 	 * Set the full node output for a specific node (from Archon API).
 	 * This is the complete output text from the node_completed event,
 	 * much richer than the line-by-line logLines buffer.
@@ -510,6 +527,7 @@ export class DagProgressTracker {
 			const logLines = patch.logLines ?? [];
 			const streamingText = patch.streamingText ?? "";
 			const toolCalls = patch.toolCalls ?? [];
+			const systemEventLogs = patch.systemEventLogs ?? [];
 			this.#nodes.set(id, {
 				id,
 				...patch,
@@ -517,6 +535,7 @@ export class DagProgressTracker {
 				logLines,
 				streamingText,
 				toolCalls,
+				systemEventLogs,
 			});
 			this.#nodeOrder.push(id);
 		}
