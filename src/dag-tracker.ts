@@ -144,6 +144,17 @@ export class DagProgressTracker {
 	 * Append a raw output line to a specific node's log buffer.
 	 * Used when we know which node the output belongs to.
 	 */
+	/**
+	 * Set the full node output for a specific node (from Archon API).
+	 * This is the complete output text from the node_completed event,
+	 * much richer than the line-by-line logLines buffer.
+	 */
+	setNodeOutput(nodeId: string, output: string): void {
+		const node = this.#nodes.get(nodeId);
+		if (!node) return;
+		node.nodeOutput = output;
+	}
+
 	appendLogLineTo(nodeId: string, line: string): void {
 		const trimmed = line.trim();
 		if (!trimmed) return;

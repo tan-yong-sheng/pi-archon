@@ -28,6 +28,18 @@ export type {
 export { ProgressBox } from "./ui/progress-box";
 export { DagProgressTracker } from "./dag-tracker";
 
+// ── Archon API client ────────────────────────────────────────
+export {
+	queryNodeOutputs,
+	getRunDetail,
+	extractNodeOutputs,
+	findLatestRunIdForWorkflow,
+	isArchonServerRunning,
+	type NodeOutputInfo,
+	type ArchonApiRunDetail,
+	type ArchonApiRunEvent,
+} from "./archon-api";
+
 // ── Artifact & history queries ───────────────────────────────
 export {
 	findLatestRunId,

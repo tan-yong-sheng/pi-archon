@@ -31,6 +31,7 @@ import {
 	findActiveRunId,
 	renderArtifactsSection,
 } from "./artifact-query";
+import { queryNodeOutputs, findLatestRunIdForWorkflow } from "./archon-api";
 import {
 	findActiveWorkflowRunId,
 	cancelArchonWorkflowRun,
@@ -55,6 +56,7 @@ export interface ActiveWorkflowRun {
 	pollTimer?: ReturnType<typeof setInterval>;
 	loopPollTimer?: ReturnType<typeof setInterval>;
 	statusTimer?: ReturnType<typeof setInterval>;
+	apiPollTimer?: ReturnType<typeof setInterval>;
 	onComplete?: (outcome: CommandWorkflowOutcome) => void;
 }
 
@@ -257,6 +259,26 @@ export function runWorkflowBackground(
 				}, 5000);
 				entry.loopPollTimer = loopPollTimer;
 
+				// ── API poll: enrich tracker with node_output from Archon server ──
+				const lastApiPolledNodes = new Set<string>();
+				const apiPollTimer = setInterval(async () => {
+					if (tracker.workflowDone) return;
+					try {
+						const runId = await findLatestRunIdForWorkflow(workflow, cwd);
+						if (!runId) return;
+						const nodeOutputs = await queryNodeOutputs(runId);
+						for (const nodeInfo of nodeOutputs) {
+							if (nodeInfo.output && !lastApiPolledNodes.has(nodeInfo.nodeId)) {
+								tracker.setNodeOutput(nodeInfo.nodeId, nodeInfo.output);
+								lastApiPolledNodes.add(nodeInfo.nodeId);
+							}
+						}
+					} catch {
+						// Best-effort — Archon server may not be running
+					}
+				}, 5000);
+				entry.apiPollTimer = apiPollTimer;
+
 				// ── Handle process exit ───────────────────────────
 				proc.on("close", async (exitCode) => {
 					const durationMs = Date.now() - entry.startedAt;
@@ -278,6 +300,7 @@ export function runWorkflowBackground(
 					clearInterval(pollTimer);
 					clearInterval(statusTimer);
 					clearInterval(loopPollTimer);
+				clearInterval(apiPollTimer);
 
 					// Dismiss overlay after a brief delay so the user sees "✓ complete"
 					setTimeout(() => {
@@ -298,15 +321,50 @@ export function runWorkflowBackground(
 						durationMs,
 					};
 
-					// Build the result message
-					const cleaned = formatArchonOutput(
-						`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
-						runResult,
-						durationMs,
-					)
-						.split("\n")
-						.filter((l: string) => !/^\[(?:INF|WRN)\] /m.test(l))
-						.join("\n");
+					// Build the result message — prefer API-sourced node output for clean results
+					let cleaned: string;
+					try {
+						const runId = await findLatestRunIdForWorkflow(workflow, cwd);
+						if (runId) {
+							const nodeOutputs = await queryNodeOutputs(runId);
+							if (nodeOutputs.length > 0) {
+								// Build result from structured node outputs (no duplication)
+								const status = exitCode === 0 ? "✅ success" : "❌ failed";
+								const duration = typeof durationMs === "number"
+									? fmtElapsed(Math.floor(durationMs / 1000))
+									: "";
+								let md = `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n\n`;
+								md += `- **Result:** ${status} (exit \`${String(exitCode ?? 1)}\`)\n`;
+								if (duration) md += `- **Duration:** \`${duration}\`\n`;
+								md += "\n### Output\n\n";
+								for (const node of nodeOutputs) {
+									if (node.output) {
+										md += `**${node.nodeId}**${node.nodeType ? ` [${node.nodeType}]` : ""}\n`;
+										md += node.output + "\n\n";
+									}
+								}
+								cleaned = md.trim();
+							} else {
+								cleaned = formatArchonOutput(
+									`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+									runResult,
+									durationMs,
+								);
+							}
+						} else {
+							cleaned = formatArchonOutput(
+								`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+								runResult,
+								durationMs,
+							);
+						}
+					} catch {
+						cleaned = formatArchonOutput(
+							`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
+							runResult,
+							durationMs,
+						);
+					}
 
 					// Query artifacts (best-effort)
 					// Query artifacts (best-effort, awaited)
@@ -456,6 +514,7 @@ export async function cancelRun(runId: string): Promise<void> {
 	if (entry.pollTimer) clearInterval(entry.pollTimer);
 	if (entry.statusTimer) clearInterval(entry.statusTimer);
 	if (entry.loopPollTimer) clearInterval(entry.loopPollTimer);
+		if (entry.apiPollTimer) clearInterval(entry.apiPollTimer);
 
 	// Post cancellation message
 	entry.tracker.applyEvent({ type: "workflow_failed", error: "cancelled" });

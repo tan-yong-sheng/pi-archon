@@ -275,10 +275,12 @@ export class WorkflowOverlay implements Component {
 				providerBadge = th.fg("dim", ` via ${node.provider}`);
 			}
 
-			// Log count indicator
+			// Log/output indicator
 			let logBadge = "";
-			if (node.logLines.length > 0) {
-				logBadge = th.fg("dim", ` 📋${node.logLines.length}`);
+			if (node.nodeOutput) {
+				logBadge = th.fg("success", " 📋✓"); // API output available
+			} else if (node.logLines.length > 0) {
+				logBadge = th.fg("dim", ` 📋${node.logLines.length}`); // stderr lines
 			}
 
 			const selectMarker = isSelected ? th.fg("accent", "▸") : " ";
@@ -342,6 +344,7 @@ export class WorkflowOverlay implements Component {
 			if (nodes.length > 0 && this.selectedNodeIdx < nodes.length) {
 				const node = nodes[this.selectedNodeIdx];
 				if (
+					node.nodeOutput ||
 					node.logLines.length > 0 ||
 					node.state === "running" ||
 					node.state === "done" ||
@@ -463,8 +466,20 @@ export class WorkflowOverlay implements Component {
 		// ── Separator ────────────────────────────────────────
 		lines.push(border(bl) + border("├" + "─".repeat(innerWidth - 1) + "┤"));
 
-		// ── Log lines ────────────────────────────────────────
-		const logLines = node.logLines;
+		// ── Log lines — prefer nodeOutput (API) over logLines (stderr) ──
+		// nodeOutput comes from Archon API's node_completed event data
+		// and contains the complete structured output for the node.
+		// logLines are the line-by-line stderr capture (lossier).
+		let logLines: string[];
+		let logSource: string;
+		if (node.nodeOutput) {
+			// Full node output from API — split into lines for display
+			logLines = node.nodeOutput.split("\n");
+			logSource = "api";
+		} else {
+			logLines = node.logLines;
+			logSource = "live";
+		}
 		const maxLogVisible = height ? Math.max(height - 6, 5) : 10;
 
 		// Clamp log scroll

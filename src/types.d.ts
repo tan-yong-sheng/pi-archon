@@ -334,6 +334,8 @@ export interface DagNodeInfo {
 	numTurns?: number;
 	/** Ring buffer of recent log/output lines captured between node Started and Completed */
 	logLines: string[];
+	/** Full node output from Archon API (node_completed event node_output field) */
+	nodeOutput?: string;
 }
 
 export interface ToolActivity {

@@ -43,6 +43,7 @@ import { handleArchonStatusCommand } from "./workflow-ops";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
 import { runWorkflowBackground } from "./workflow-background";
+import { queryNodeOutputs, type NodeOutputInfo } from "./archon-api";
 
 // ── Dashboard view levels ────────────────────────────────────
 type ViewLevel = "run-list" | "run-detail" | "node-detail";
@@ -213,6 +214,8 @@ class ArchonsDashboard implements Component {
 	private runArtifacts: WorkflowArtifact[] = [];
 	private nodeSummaries: NodeSummaryRow[] = [];
 	private allWorkflows: string[] = [];
+	// API-sourced node outputs for completed runs (keyed by nodeId)
+	private apiNodeOutputs: Map<string, string> = new Map();
 
 	// Polling for live updates
 	private pollTimer?: ReturnType<typeof setInterval>;
@@ -727,6 +730,8 @@ class ArchonsDashboard implements Component {
 			this.level = "node-detail";
 			this.list = this.buildNodeDetailList(this.selectedNodeId!);
 			this.tui.requestRender();
+			// Async: fetch node outputs from Archon API for completed runs
+			this.fetchApiNodeOutputs(this.selectedRunId, this.selectedNodeId!);
 			return;
 		}
 	}
@@ -842,9 +847,38 @@ class ArchonsDashboard implements Component {
 			}
 		}
 
-		// Log lines from tracker (active runs only)
+		// Node output — prefer nodeOutput (API) over logLines (stderr capture)
+		const nodeOutput = node?.nodeOutput ?? this.apiNodeOutputs.get(nodeId);
 		const logLines = node?.logLines ?? [];
-		if (logLines.length > 0) {
+		if (nodeOutput) {
+			// Full node output from Archon API — show as formatted text
+			const outputLines = nodeOutput.split("\n");
+			items.push({
+				value: "__section_output__",
+				label: th.fg("success", ` Output (${outputLines.length} lines · API)`),
+				description: "",
+			});
+			const showLines = outputLines.slice(-20);
+			const startIdx = outputLines.length - showLines.length;
+			for (let i = 0; i < showLines.length; i++) {
+				const lineNum = startIdx + i + 1;
+				const lineText = showLines[i].length > 70
+					? showLines[i].slice(0, 67) + "…"
+					: showLines[i];
+				items.push({
+					value: `output:${lineNum}`,
+					label: th.fg("dim", ` ${String(lineNum).padStart(3)} │ ${lineText}`),
+					description: "",
+				});
+			}
+			if (outputLines.length > 20) {
+				items.push({
+					value: "__output_more__",
+					label: th.fg("dim", `     … ${outputLines.length - 20} earlier lines`),
+					description: "",
+				});
+			}
+		} else if (logLines.length > 0) {
 			items.push({
 				value: "__section_logs__",
 				label: th.fg("accent", ` Logs (${logLines.length} lines)`),
@@ -890,6 +924,32 @@ class ArchonsDashboard implements Component {
 		list.onSelect = () => {}; // No drill-down from node detail
 		list.onCancel = () => this.goBack();
 		return list;
+	}
+
+	// ── API enrichment ─────────────────────────────────────────
+	private async fetchApiNodeOutputs(runId: string | null, _nodeId: string): Promise<void> {
+		if (!runId) return;
+		try {
+			const outputs = await queryNodeOutputs(runId);
+			for (const nodeInfo of outputs) {
+				if (nodeInfo.output) {
+					this.apiNodeOutputs.set(nodeInfo.nodeId, nodeInfo.output);
+				}
+			}
+			// Rebuild list if we're still on node-detail level
+			if (this.level === "node-detail" && this.selectedNodeId) {
+				const prevIndex = this.list.selectedIndex;
+				this.list = this.buildNodeDetailList(this.selectedNodeId);
+				if (prevIndex > 0) {
+					this.list.setSelectedIndex(
+						Math.min(prevIndex, this.list.filteredItems.length - 1),
+					);
+				}
+				this.tui.requestRender();
+			}
+		} catch {
+			// Best-effort
+		}
 	}
 
 	// ── Navigation helpers ───────────────────────────────────
