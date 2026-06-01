@@ -28,6 +28,7 @@
     "url": "https://github.com/loopyd/pi-archon/issues"
   },
   "license": "MIT",
+  "packageManager": "pnpm@10.33.4",
   "engines": {
     "node": ">=20.6.0"
   },
@@ -42,7 +43,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm pack --dry-run"
+    "test": "pnpm run typecheck && pnpm pack --dry-run"
   },
   "dependencies": {
     "typebox": "^1.1.0"
