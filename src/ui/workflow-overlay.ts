@@ -186,13 +186,16 @@ export class WorkflowOverlay implements Component {
 		const innerWidth = w - 2;
 
 		// ── Section 1: Header ──────────────────────────────
-		const statusIcon = tracker.workflowDone
-			? tracker.workflowError
-				? th.fg("error", "✗")
-				: th.fg("success", "✓")
-			: th.fg("accent", "◆");
+		const isPaused = !!tracker.approvalPendingNodeId;
+		const statusIcon = isPaused
+			? th.fg("warning", "⏸")
+			: tracker.workflowDone
+				? tracker.workflowError
+					? th.fg("error", "✗")
+					: th.fg("success", "✓")
+				: th.fg("accent", "◆");
 
-		const titleText = `${statusIcon} ${this.workflowName}`;
+		const titleText = `${statusIcon} ${this.workflowName}${isPaused ? th.fg("dim", " paused") : ""}`;
 		const timeText = tracker.workflowDone ? elapsed : progress;
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
 		lines.push(
@@ -299,17 +302,24 @@ export class WorkflowOverlay implements Component {
 		const tabHint = " · Tab=scroll";
 
 		// When paused at an approval gate, show an approve keybinding hint
-		const isPaused = !!tracker.approvalPendingNodeId;
-		const approveHint = isPaused ? " · a=approve r=reject" : "";
+		const approveHint =
+			this.tracker.approvalPendingNodeId
+				? " · a=approve r=reject"
+				: "";
 
-		const footerHint = tracker.workflowDone
-			? tracker.workflowError
-				? th.fg("error", " failed ")
-				: th.fg("success", " complete ")
-			: th.fg(
+		const footerHint = this.tracker.approvalPendingNodeId
+			? th.fg(
 					"dim",
-					` Esc=cancel · e=expand${approveHint}${scrollHint}${enterHint}${tabHint} `,
-				);
+					` Esc=abandon · e=expand${approveHint}${scrollHint}${enterHint}${tabHint} `,
+				)
+			: tracker.workflowDone
+				? tracker.workflowError
+					? th.fg("error", " failed ")
+					: th.fg("success", " complete ")
+				: th.fg(
+						"dim",
+						` Esc=cancel · e=expand${approveHint}${scrollHint}${enterHint}${tabHint} `,
+					);
 		lines.push(border("╰") + padLine(footerHint, innerWidth) + border("╯"));
 
 		return lines;
