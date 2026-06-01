@@ -23,8 +23,6 @@ import type { Component, TUI, Theme } from "@mariozechner/pi-tui";
 import {
 	SelectList,
 	type SelectItem,
-	matchesKey,
-	Key,
 } from "@mariozechner/pi-tui";
 import {
 	getActiveRuns,
@@ -43,7 +41,7 @@ import { handleArchonStatusCommand } from "./workflow-ops";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
 import { runWorkflowBackground } from "./workflow-background";
-import { queryNodeOutputs, type NodeOutputInfo } from "./archon-api";
+import { queryNodeOutputs } from "./archon-api";
 
 // ── Dashboard view levels ────────────────────────────────────
 type ViewLevel = "run-list" | "run-detail" | "node-detail";
@@ -921,7 +919,11 @@ class ArchonsDashboard implements Component {
 			scrollInfo: (t: string) => th.fg("dim", t),
 			noMatch: (t: string) => th.fg("dim", t),
 		});
-		list.onSelect = () => {}; // No drill-down from node detail
+		list.onSelect = (item: SelectItem) => {
+			if (item.value === "__back__") {
+				this.goBack();
+			}
+		}; // Enter on Back item navigates up
 		list.onCancel = () => this.goBack();
 		return list;
 	}
@@ -1032,14 +1034,9 @@ class ArchonsDashboard implements Component {
 	}
 
 	handleInput(data: string): boolean {
-		// Esc at top level dismisses
-		if (matchesKey(data, Key.escape) && this.level === "run-list") {
-			// Let SelectList handle it first (it may close itself)
-			// If we're here, SelectList already handled its onCancel → dismiss
-			this.dismiss();
-			return true;
-		}
-		// Forward to SelectList
+		// Forward all input to SelectList — it handles Esc via onCancel
+		// which calls goBack() or dismiss() depending on level.
+		// At run-list level, goBack() → dismiss() since there's no parent level.
 		this.list.handleInput(data);
 		return true;
 	}

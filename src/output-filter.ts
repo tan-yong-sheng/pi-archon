@@ -74,10 +74,7 @@ function stripAfterWorkflowFinished(text: string): string {
 	const lines = text.split("\n");
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i]?.trim() ?? "";
-		if (
-			line.startsWith("{") &&
-			line.includes("dag_workflow_finished")
-		) {
+		if (line.startsWith("{") && line.includes("dag_workflow_finished")) {
 			return lines.slice(0, i).join("\n");
 		}
 	}
@@ -122,7 +119,6 @@ function parseLine(raw: string): LiveEventLine {
 	if (!trimmed) return { text: "", isErr: false };
 	if (/^\[+$/.test(trimmed) || /^\]+$/.test(trimmed))
 		return { text: "", isErr: false };
-
 
 	// ── Try structured JSON event (legacy Archon format) ──
 	let payload: JsonPayload | undefined;
@@ -289,7 +285,7 @@ export function cleanOutput(text: string): string {
 				.filter((e) => e.text.trim())
 				.map((e) => e.text)
 				.join("\n")
-			.trim()
+				.trim(),
 		);
 	}
 
@@ -471,8 +467,7 @@ function tryParseJsonDagEvent(line: string): DagEvent | undefined {
 			if (!nodeId) return undefined;
 			const durationMs =
 				typeof obj.durationMs === "number" ? obj.durationMs : undefined;
-			const costUsd =
-				typeof obj.costUsd === "number" ? obj.costUsd : undefined;
+			const costUsd = typeof obj.costUsd === "number" ? obj.costUsd : undefined;
 			const numTurns =
 				typeof obj.numTurns === "number" ? obj.numTurns : undefined;
 			const duration =
