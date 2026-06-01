@@ -47,7 +47,14 @@ export interface ArchonApiRunDetail {
 			};
 			total_cost_usd?: number;
 		};
-		conversation_platform_id: string;
+		/** Platform conversation ID (e.g. 'cli-1780306933204-bvijtl')
+		 *  Used for SSE streaming of AI text + tool calls. */
+		conversation_platform_id: string | null;
+		/** Worker platform conversation ID (for Web runs with separate worker).
+		 *  CLI runs have this as null — the parent conversation IS the worker. */
+		worker_platform_id?: string | null;
+		/** Parent platform conversation ID (the conversation that dispatched this workflow). */
+		parent_platform_id?: string | null;
 	};
 	events: ArchonApiRunEvent[];
 }

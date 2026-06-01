@@ -3,10 +3,10 @@
  * live overlay popup.
  *
  * Design:
- *   /archon workflow run X → spawn CLI in background
- *                          → show nonCapturing overlay (top-right)
- *                          → return immediately (user can keep chatting)
- *                          → on completion: dismiss overlay, post result
+ *   /archon workflow run X  →  spawn CLI in background
+ *                             →  show nonCapturing overlay (top-right)
+ *                             →  return immediately (user can keep chatting)
+ *                             →  on completion: dismiss overlay, post result
  *
  * Uses ctx.ui.custom() with an invisible controller component that
  * immediately creates the overlay via tui.showOverlay() and calls done().
@@ -19,10 +19,11 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import type { TUI, Theme, OverlayHandle } from "@mariozechner/pi-tui";
 import { spawn, type ChildProcess } from "node:child_process";
+
 import { DagProgressTracker } from "./dag-tracker";
 import { WorkflowOverlay, fmtElapsed } from "./ui/workflow-overlay";
 import { STATUS_KEY_RUNNING, PROGRESS_UPDATE_MS } from "./constants";
-import { formatElapsed, toPillLabel } from "./helpers";
+import { toPillLabel } from "./helpers";
 import { redactSecrets, safeCode, tryParseDagEvent } from "./output-filter";
 import {
 	findLatestRunId,
@@ -31,13 +32,22 @@ import {
 	findActiveRunId,
 	renderArtifactsSection,
 } from "./artifact-query";
-import { queryNodeOutputs, findLatestRunIdForWorkflow } from "./archon-api";
-import { ArchonSSEClient, mapSSEToDagEvent, type ArchonSSEEvent } from "./archon-sse";
+import {
+	queryNodeOutputs,
+	findLatestRunIdForWorkflow,
+	getRunDetail,
+} from "./archon-api";
+import {
+	ArchonSSEClient,
+	ArchonConversationSSE,
+	mapSSEToDagEvent,
+	type ArchonSSEEvent,
+} from "./archon-sse";
 import {
 	findActiveWorkflowRunId,
 	cancelArchonWorkflowRun,
 } from "./workflow-ops";
-import { runArchonCommand, formatArchonOutput } from "./archon-exec";
+import { formatArchonOutput } from "./archon-exec";
 import type {
 	ArchonRunResult,
 	CommandWorkflowOutcome,
@@ -59,12 +69,12 @@ export interface ActiveWorkflowRun {
 	statusTimer?: ReturnType<typeof setInterval>;
 	apiPollTimer?: ReturnType<typeof setInterval>;
 	sseClient?: ArchonSSEClient;
+	conversationSSE?: ArchonConversationSSE;
 	onComplete?: (outcome: CommandWorkflowOutcome) => void;
 }
 
 /** Global map of currently-running workflow runs, keyed by a unique run ID. */
 const activeRuns = new Map<string, ActiveWorkflowRun>();
-
 let runCounter = 0;
 
 function nextRunId(): string {
@@ -81,16 +91,15 @@ export function getActiveRun(runId: string): ActiveWorkflowRun | undefined {
 
 // ── Resolve archon CLI binary ───────────────────────────────
 
-function resolveArchonBin(cwd: string): { cmd: string; args: string[] } {
+function resolveArchonBin(
+	_cwd: string,
+): { cmd: string; args: string[] } {
 	// Reuse the same logic as archon-exec.ts
 	const fs = require("node:fs");
 	const path = require("node:path");
 	const archonRoot = process.env.ARCHON_ROOT || "/opt/archon";
 	if (fs.existsSync(path.join(archonRoot, "package.json"))) {
-		return {
-			cmd: "bun",
-			args: ["run", "cli"],
-		};
+		return { cmd: "bun", args: ["run", "cli"] };
 	}
 	return { cmd: "archon", args: [] };
 }
@@ -117,7 +126,8 @@ export function runWorkflowBackground(
 	const runId = nextRunId();
 	const cwd = ctx.cwd || process.cwd();
 	const tracker = new DagProgressTracker();
-	const queryPreview = query.length > 72 ? `${query.slice(0, 72)}…` : query;
+	const queryPreview =
+		query.length > 72 ? `${query.slice(0, 72)}…` : query;
 
 	const entry: ActiveWorkflowRun = {
 		workflowName: workflow,
@@ -148,14 +158,13 @@ export function runWorkflowBackground(
 					theme,
 				);
 
-				// Show as non-capturing overlay — width 52 for log inspector
+				// Show as nonCapturing overlay — width 52 for log inspector
 				const handle = tui.showOverlay(overlay, {
 					nonCapturing: true,
 					anchor: "top-right",
 					width: 52,
 					margin: { top: 1, right: 2 },
 				});
-
 				entry.overlayHandle = handle;
 				overlay.setOverlayHandle(handle);
 
@@ -175,7 +184,6 @@ export function runWorkflowBackground(
 					env: { ...process.env },
 					stdio: ["ignore", "pipe", "pipe"],
 				});
-
 				entry.process = proc;
 
 				// ── Stream stdout/stderr: parse DAG events + capture node logs + buffer ──
@@ -224,9 +232,6 @@ export function runWorkflowBackground(
 				// ── Status bar sync ──────────────────────────────
 				const statusTimer = setInterval(() => {
 					if (tracker.workflowDone) return;
-					const elapsed = formatElapsed(
-						Math.floor((Date.now() - entry.startedAt) / 1000),
-					);
 					const progress = tracker.progressSummary(
 						Math.floor((Date.now() - entry.startedAt) / 1000),
 					);
@@ -266,11 +271,14 @@ export function runWorkflowBackground(
 				const apiPollTimer = setInterval(async () => {
 					if (tracker.workflowDone) return;
 					try {
-						const runId = await findLatestRunIdForWorkflow(workflow, cwd);
-						if (!runId) return;
-						const nodeOutputs = await queryNodeOutputs(runId);
+						const rid = await findLatestRunIdForWorkflow(workflow, cwd);
+						if (!rid) return;
+						const nodeOutputs = await queryNodeOutputs(rid);
 						for (const nodeInfo of nodeOutputs) {
-							if (nodeInfo.output && !lastApiPolledNodes.has(nodeInfo.nodeId)) {
+							if (
+								nodeInfo.output &&
+								!lastApiPolledNodes.has(nodeInfo.nodeId)
+							) {
 								tracker.setNodeOutput(nodeInfo.nodeId, nodeInfo.output);
 								lastApiPolledNodes.add(nodeInfo.nodeId);
 							}
@@ -281,12 +289,11 @@ export function runWorkflowBackground(
 				}, 5000);
 				entry.apiPollTimer = apiPollTimer;
 
-				// ── SSE: real-time event stream from Archon server ────────────
+				// ── SSE: dashboard event stream for node status ────────────
 				// Connect to /api/stream/__dashboard__ for live workflow events.
 				// SSE events feed directly into the tracker (zero latency),
 				// and node_completed triggers an immediate node_output query.
 				const sseClient = new ArchonSSEClient();
-				let sseConnected = false;
 				sseClient.onEvent = (event: ArchonSSEEvent) => {
 					// Map SSE event to DagEvent and apply to tracker
 					const dagEvent = mapSSEToDagEvent(event);
@@ -295,17 +302,21 @@ export function runWorkflowBackground(
 
 					// On node_completed, immediately query the API for node_output
 					if (event.type === "dag_node" && event.status === "completed") {
-						findLatestRunIdForWorkflow(workflow, cwd).then((runId) => {
-							if (!runId) return;
-							queryNodeOutputs(runId).then((outputs) => {
-								for (const n of outputs) {
-									if (n.output && n.nodeId === event.nodeId) {
-										tracker.setNodeOutput(n.nodeId, n.output);
-									}
-								}
-								tui.requestRender();
-							}).catch(() => {});
-						}).catch(() => {});
+						findLatestRunIdForWorkflow(workflow, cwd)
+							.then((rid) => {
+								if (!rid) return;
+								queryNodeOutputs(rid)
+									.then((outputs) => {
+										for (const n of outputs) {
+											if (n.output && n.nodeId === event.nodeId) {
+												tracker.setNodeOutput(n.nodeId, n.output);
+											}
+										}
+										tui.requestRender();
+									})
+									.catch(() => {});
+							})
+							.catch(() => {});
 					}
 
 					// On workflow_artifact, log for later artifact query
@@ -316,14 +327,90 @@ export function runWorkflowBackground(
 						} as never);
 					}
 				};
-				sseClient.onConnectionChange = (connected: boolean) => {
-					sseConnected = connected;
-				};
+
 				// Connect async — don't block if server isn't running
-				sseClient.connect().then((ok) => {
-					if (ok) entry.sseClient = sseClient;
-				}).catch(() => {});
+				sseClient
+					.connect()
+					.then((ok) => {
+						if (ok) entry.sseClient = sseClient;
+					})
+					.catch(() => {});
 				entry.sseClient = sseClient; // store ref even if connecting
+
+				// ── SSE: conversation stream for AI text + tool calls ─────────
+				// The conversation_platform_id is needed to connect to the
+				// per-conversation SSE stream. We discover it by polling the
+				// run detail API after the workflow starts.
+				let conversationSSEConnected = false;
+				const conversationDiscoveryTimer = setInterval(async () => {
+					if (conversationSSEConnected || tracker.workflowDone) {
+						clearInterval(conversationDiscoveryTimer);
+						return;
+					}
+					try {
+						const rid = await findLatestRunIdForWorkflow(workflow, cwd);
+						if (!rid) return;
+						const detail = await getRunDetail(rid);
+						if (!detail) return;
+
+						const platformId =
+							detail.run.worker_platform_id ??
+							detail.run.conversation_platform_id;
+						if (!platformId) return;
+
+						// Found the conversation ID — connect to its SSE stream
+						const convSSE = new ArchonConversationSSE(
+							"http://127.0.0.1:3090",
+							platformId,
+						);
+
+						convSSE.onText = (content) => {
+							// Append streaming AI text to the currently-running node
+							tracker.appendLogLine(content);
+							tui.requestRender();
+						};
+
+						convSSE.onToolCall = (name, input) => {
+							// Update the active node's tool info
+							const inputStr = Object.keys(input).length > 0
+								? ` ${JSON.stringify(input).slice(0, 60)}`
+								: "";
+							tracker.appendLogLine(`⟳ ${name}${inputStr}`);
+							// Also update the tracker's activeTool
+							tracker.setCurrentNodeTool(name);
+							tui.requestRender();
+						};
+
+						convSSE.onToolResult = (name, output, duration) => {
+							const durStr =
+								duration > 1000
+									? `${Math.round(duration / 100) / 10}s`
+									: `${duration}ms`;
+							const outputPreview =
+								output.length > 80
+									? `${output.slice(0, 80)}…`
+									: output;
+							tracker.appendLogLine(
+								`✓ ${name} (${durStr}): ${outputPreview}`,
+							);
+							tui.requestRender();
+						};
+
+						convSSE.onError = (message) => {
+							tracker.appendLogLine(`⚠ Error: ${message}`);
+							tui.requestRender();
+						};
+
+						const connected = await convSSE.connect();
+						if (connected) {
+							conversationSSEConnected = true;
+							entry.conversationSSE = convSSE;
+							clearInterval(conversationDiscoveryTimer);
+						}
+					} catch {
+						// Best-effort
+					}
+				}, 2000); // poll every 2s for conversation ID
 
 				// ── Handle process exit ───────────────────────────
 				proc.on("close", async (exitCode) => {
@@ -346,8 +433,10 @@ export function runWorkflowBackground(
 					clearInterval(pollTimer);
 					clearInterval(statusTimer);
 					clearInterval(loopPollTimer);
-				clearInterval(apiPollTimer);
+					clearInterval(apiPollTimer);
+					clearInterval(conversationDiscoveryTimer);
 					entry.sseClient?.disconnect();
+					entry.conversationSSE?.disconnect();
 
 					// Dismiss overlay after a brief delay so the user sees "✓ complete"
 					setTimeout(() => {
@@ -362,7 +451,6 @@ export function runWorkflowBackground(
 						stderr: stderrBuf,
 						command: `${cmd} ${cliArgs.join(" ")}`,
 					};
-
 					const outcome: CommandWorkflowOutcome = {
 						run: runResult,
 						durationMs,
@@ -371,15 +459,17 @@ export function runWorkflowBackground(
 					// Build the result message — prefer API-sourced node output for clean results
 					let cleaned: string;
 					try {
-						const runId = await findLatestRunIdForWorkflow(workflow, cwd);
-						if (runId) {
-							const nodeOutputs = await queryNodeOutputs(runId);
+						const rid = await findLatestRunIdForWorkflow(workflow, cwd);
+						if (rid) {
+							const nodeOutputs = await queryNodeOutputs(rid);
 							if (nodeOutputs.length > 0) {
 								// Build result from structured node outputs (no duplication)
-								const status = exitCode === 0 ? "✅ success" : "❌ failed";
-								const duration = typeof durationMs === "number"
-									? fmtElapsed(Math.floor(durationMs / 1000))
-									: "";
+								const status =
+									exitCode === 0 ? "✅ success" : "❌ failed";
+								const duration =
+									typeof durationMs === "number"
+										? fmtElapsed(Math.floor(durationMs / 1000))
+										: "";
 								let md = `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n\n`;
 								md += `- **Result:** ${status} (exit \`${String(exitCode ?? 1)}\`)\n`;
 								if (duration) md += `- **Duration:** \`${duration}\`\n`;
@@ -413,9 +503,9 @@ export function runWorkflowBackground(
 						);
 					}
 
-					// Query artifacts (best-effort)
 					// Query artifacts (best-effort, awaited)
-					let artifacts: Awaited<ReturnType<typeof queryRunArtifacts>> = [];
+					let artifacts: Awaited<ReturnType<typeof queryRunArtifacts>> =
+						[];
 					try {
 						const rid = await findLatestRunId(workflow, cwd);
 						if (rid) artifacts = await queryRunArtifacts(rid);
@@ -471,10 +561,10 @@ export function runWorkflowBackground(
 						error: err.message,
 					});
 					tui.requestRender();
-
 					clearInterval(pollTimer);
 					clearInterval(statusTimer);
 					clearInterval(loopPollTimer);
+					entry.conversationSSE?.disconnect();
 
 					setTimeout(() => {
 						handle.hide();
@@ -496,9 +586,10 @@ export function runWorkflowBackground(
 						},
 						{ deliverAs: "steer" },
 					);
-
-					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
-
+					ctx.ui.notify?.(
+						`Archon ${workflow} failed: ${err.message}`,
+						"error",
+					);
 					activeRuns.delete(runId);
 				});
 
@@ -561,11 +652,14 @@ export async function cancelRun(runId: string): Promise<void> {
 	if (entry.pollTimer) clearInterval(entry.pollTimer);
 	if (entry.statusTimer) clearInterval(entry.statusTimer);
 	if (entry.loopPollTimer) clearInterval(entry.loopPollTimer);
-		if (entry.apiPollTimer) clearInterval(entry.apiPollTimer);
-		entry.sseClient?.disconnect();
+	if (entry.apiPollTimer) clearInterval(entry.apiPollTimer);
+	entry.sseClient?.disconnect();
+	entry.conversationSSE?.disconnect();
 
 	// Post cancellation message
-	entry.tracker.applyEvent({ type: "workflow_failed", error: "cancelled" });
-
+	entry.tracker.applyEvent({
+		type: "workflow_failed",
+		error: "cancelled",
+	});
 	activeRuns.delete(runId);
 }

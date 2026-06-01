@@ -354,6 +354,11 @@ export class DagProgressTracker {
 
 	// ─── Internal ───────────────────────────────────────────────
 
+	setCurrentNodeTool(toolName: string): void {
+		const nodeId = this.currentRunningNodeId;
+		if (nodeId) this.upsertNode(nodeId, { activeTool: toolName });
+	}
+
 	private upsertNode(
 		id: string,
 		patch: Partial<DagNodeInfo> & { state?: DagNodeState },

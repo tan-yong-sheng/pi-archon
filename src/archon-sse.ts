@@ -1,31 +1,31 @@
 /**
  * Archon SSE Client — real-time workflow event stream.
  *
- * Connects to the Archon Web server's dashboard SSE endpoint
- * (`/api/stream/__dashboard__`) which receives ALL workflow events
- * as a multiplexed fan-out stream. This provides the same real-time
- * observability data that the Archon Web UI consumes, without needing
- * to modify the Archon CLI.
+ * Two connection types:
+ * 1. Dashboard SSE (`/api/stream/__dashboard__`) — multiplexed stream
+ *    receiving ALL workflow events (node status, tool activity, loop
+ *    iterations, artifacts, workflow lifecycle).
  *
- * Event types from the server (via workflow-bridge.ts mapWorkflowEvent):
- *   - workflow_status: started/completed/failed/paused/cancelled
- *   - dag_node: started/completed/failed/skipped (with duration/error/reason)
- *   - workflow_tool_activity: started/completed (with durationMs)
- *   - workflow_step: loop iteration progress
- *   - workflow_artifact: artifactType/label/url/path
+ * 2. Conversation SSE (`/api/stream/:conversationId`) — per-conversation
+ *    stream receiving real-time AI output (text streaming, tool calls
+ *    with input/output, errors). This is what the Archon Web UI uses
+ *    in its WorkflowLogs component to show live node output.
  *
  * Usage:
- *   const client = new ArchonSSEClient('http://127.0.0.1:3090');
- *   client.onEvent = (event) => { tracker.applyEvent(mapSSEtoDagEvent(event)); };
- *   await client.connect();
- *   // ... later ...
- *   client.disconnect();
+ *   // Dashboard events (node status changes):
+ *   const dashboard = new ArchonSSEClient('http://127.0.0.1:3090');
+ *   dashboard.onEvent = (event) => { ... };
+ *   await dashboard.connect();
  *
- * The client auto-reconnects on connection loss with exponential backoff.
- * Heartbeat events are filtered out.
+ *   // Conversation events (streaming AI output):
+ *   const conversation = new ArchonConversationSSE('http://127.0.0.1:3090', conversationId);
+ *   conversation.onText = (content) => { ... };
+ *   conversation.onToolCall = (name, input) => { ... };
+ *   conversation.onToolResult = (name, output, duration) => { ... };
+ *   await conversation.connect();
  */
 
-// ── Types ────────────────────────────────────────────────────
+// ── Dashboard SSE Types ──────────────────────────────────────
 
 export interface SSEWorkflowStatusEvent {
 	type: "workflow_status";
@@ -95,7 +95,63 @@ export type ArchonSSEEvent =
 	| SSEWorkflowArtifactEvent
 	| SSEHeartbeatEvent;
 
-// ── SSE Client ───────────────────────────────────────────────
+// ── Conversation SSE Types ───────────────────────────────────
+
+/** AI text streaming event from conversation SSE */
+export interface SSETextEvent {
+	type: "text";
+	content: string;
+	isComplete: boolean;
+	workflowResult?: { workflowName: string; runId: string };
+}
+
+/** Tool call started event */
+export interface SSEToolCallEvent {
+	type: "tool_call";
+	name: string;
+	input: Record<string, unknown>;
+	toolCallId?: string;
+}
+
+/** Tool result completed event */
+export interface SSEToolResultEvent {
+	type: "tool_result";
+	name: string;
+	output: string;
+	duration: number;
+	toolCallId?: string;
+}
+
+/** Error event */
+export interface SSEErrorEvent {
+	type: "error";
+	message: string;
+	classification?: string;
+	suggestedActions?: string[];
+}
+
+/** Workflow dispatch event (parent → worker notification) */
+export interface SSEWorkflowDispatchEvent {
+	type: "workflow_dispatch";
+	workerConversationId: string;
+	workflowName: string;
+}
+
+/** Retract event (workflow routing detected) */
+export interface SSERetractEvent {
+	type: "retract";
+}
+
+export type ArchonConversationEvent =
+	| SSETextEvent
+	| SSEToolCallEvent
+	| SSEToolResultEvent
+	| SSEErrorEvent
+	| SSEWorkflowDispatchEvent
+	| SSERetractEvent
+	| SSEHeartbeatEvent;
+
+// ── Dashboard SSE Client ─────────────────────────────────────
 
 export class ArchonSSEClient {
 	private baseUrl: string;
@@ -184,9 +240,8 @@ export class ArchonSSEClient {
 
 			// Apply runId filter if set
 			if (this.runIdFilter) {
-				const eventRunId = (event as unknown as Record<string, unknown>).runId as
-					| string
-					| undefined;
+				const eventRunId = (event as unknown as Record<string, unknown>)
+					.runId as string | undefined;
 				if (eventRunId && eventRunId !== this.runIdFilter) return;
 			}
 
@@ -207,6 +262,185 @@ export class ArchonSSEClient {
 			this.reconnectTimer = null;
 			await this.connect();
 		}, delay);
+	}
+}
+
+// ── Conversation SSE Client ──────────────────────────────────
+
+export class ArchonConversationSSE {
+	private baseUrl: string;
+	private conversationId: string;
+	private eventSource: EventSource | null = null;
+	private _connected = false;
+	private textBuffer = "";
+	private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** Called with accumulated text (batched at 50ms intervals, matching Web UI) */
+	onText?: (content: string, workflowResult?: { workflowName: string; runId: string }) => void;
+
+	/** Called when a tool starts executing */
+	onToolCall?: (name: string, input: Record<string, unknown>, toolCallId?: string) => void;
+
+	/** Called when a tool completes with output */
+	onToolResult?: (name: string, output: string, duration: number, toolCallId?: string) => void;
+
+	/** Called on errors */
+	onError?: (message: string, classification?: string) => void;
+
+	/** Called when workflow dispatch event is received */
+	onWorkflowDispatch?: (workerConversationId: string, workflowName: string) => void;
+
+	/** Called when retract event is received */
+	onRetract?: () => void;
+
+	/** Called when connection state changes */
+	onConnectionChange?: (connected: boolean) => void;
+
+	constructor(
+		baseUrl = "http://127.0.0.1:3090",
+		conversationId: string,
+	) {
+		this.baseUrl = baseUrl;
+		this.conversationId = conversationId;
+	}
+
+	get connected(): boolean {
+		return this._connected;
+	}
+
+	/** Flush accumulated text buffer */
+	private flushText = (): void => {
+		if (this.textBuffer) {
+			this.onText?.(this.textBuffer, this._pendingWorkflowResult);
+			this.textBuffer = "";
+			this._pendingWorkflowResult = undefined;
+		}
+		this.flushTimer = null;
+	};
+
+	private _pendingWorkflowResult?: { workflowName: string; runId: string };
+
+	/** Connect to the conversation SSE stream */
+	async connect(): Promise<boolean> {
+		if (this.eventSource) {
+			return this._connected;
+		}
+
+		return new Promise((resolve) => {
+			try {
+				const url = `${this.baseUrl}/api/stream/${encodeURIComponent(this.conversationId)}`;
+				this.eventSource = new EventSource(url);
+
+				this.eventSource.onopen = () => {
+					this._connected = true;
+					this.onConnectionChange?.(true);
+					resolve(true);
+				};
+
+				this.eventSource.onmessage = (msg) => {
+					this.handleMessage(msg.data);
+				};
+
+				this.eventSource.onerror = () => {
+					this._connected = false;
+					this.onConnectionChange?.(false);
+					this.flushText(); // flush any buffered text
+					this.eventSource?.close();
+					this.eventSource = null;
+					resolve(false);
+				};
+			} catch {
+				resolve(false);
+			}
+		});
+	}
+
+	/** Disconnect from the conversation SSE stream */
+	disconnect(): void {
+		this.flushText();
+		if (this.flushTimer) {
+			clearTimeout(this.flushTimer);
+			this.flushTimer = null;
+		}
+		if (this.eventSource) {
+			this.eventSource.close();
+			this.eventSource = null;
+		}
+		this._connected = false;
+		this.onConnectionChange?.(false);
+	}
+
+	/** Parse and dispatch a conversation SSE message */
+	private handleMessage(data: string): void {
+		try {
+			const event = JSON.parse(data) as ArchonConversationEvent;
+
+			switch (event.type) {
+				case "text": {
+					// Batch text at 50ms intervals, matching Archon Web UI
+					if (
+						"workflowResult" in event &&
+						event.workflowResult &&
+						typeof event.workflowResult === "object"
+					) {
+						this._pendingWorkflowResult = event.workflowResult as {
+							workflowName: string;
+							runId: string;
+						};
+					}
+					this.textBuffer += event.content;
+					if (!this.flushTimer) {
+						this.flushTimer = setTimeout(this.flushText, 50);
+					}
+					break;
+				}
+				case "tool_call": {
+					// Flush buffered text before tool events
+					if (this.textBuffer && this.flushTimer) {
+						clearTimeout(this.flushTimer);
+						this.flushTimer = null;
+						this.flushText();
+					}
+					this.onToolCall?.(event.name, event.input, event.toolCallId);
+					break;
+				}
+				case "tool_result": {
+					// Flush buffered text before tool results
+					if (this.textBuffer && this.flushTimer) {
+						clearTimeout(this.flushTimer);
+						this.flushTimer = null;
+						this.flushText();
+					}
+					this.onToolResult?.(
+						event.name,
+						event.output,
+						event.duration,
+						event.toolCallId,
+					);
+					break;
+				}
+				case "error": {
+					this.onError?.(event.message, event.classification);
+					break;
+				}
+				case "workflow_dispatch": {
+					this.onWorkflowDispatch?.(
+						event.workerConversationId,
+						event.workflowName,
+					);
+					break;
+				}
+				case "retract": {
+					this.onRetract?.();
+					break;
+				}
+				case "heartbeat":
+					// Ignore
+					break;
+			}
+		} catch {
+			// Non-JSON message — ignore
+		}
 	}
 }
 
@@ -238,25 +472,25 @@ export function mapSSEToDagEvent(event: ArchonSSEEvent): DagEvent | null {
 					return {
 						type: "node_started",
 						nodeId: event.nodeId,
-						};
+					};
 				case "completed":
 					return {
 						type: "node_completed",
 						nodeId: event.nodeId,
-							duration: formatSSEDuration(event.duration),
+						duration: formatSSEDuration(event.duration),
 						durationMs: event.duration,
 					};
 				case "failed":
 					return {
 						type: "node_failed",
 						nodeId: event.nodeId,
-							error: event.error ?? "Node failed",
+						error: event.error ?? "Node failed",
 					};
 				case "skipped":
 					return {
 						type: "node_skipped",
 						nodeId: event.nodeId,
-							reason: event.reason ?? "unknown",
+						reason: event.reason ?? "unknown",
 					};
 			}
 			return null;
