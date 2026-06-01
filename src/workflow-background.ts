@@ -639,7 +639,7 @@ export async function approveWorkflowBackground(
 	ctx: ExtensionCommandContext,
 ): Promise<string | null> {
 	// Build CLI args: archon workflow approve <runId> [comment]
-	const cliArgs: string[] = ["workflow", "approve", runId];
+	const cliArgs: string[] = ["workflow", "approve", runId, "--no-worktree"];
 	if (comment) {
 		cliArgs.push(comment);
 	}

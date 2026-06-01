@@ -113,7 +113,7 @@ export async function listWorkflowsWithDetails(
 	projectCwd?: string,
 ): Promise<WorkflowInfo[] | undefined> {
 	try {
-		const args = ["workflow", "list", "--json"];
+		const args = ["workflow", "list", "--json", "--no-worktree"];
 		if (projectCwd) {
 			args.push("--cwd", projectCwd);
 		}

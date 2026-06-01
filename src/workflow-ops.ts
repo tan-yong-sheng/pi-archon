@@ -125,7 +125,7 @@ export async function handleArchonStatusCommand(
 	try {
 		const run = await runArchonCommand(
 			pi,
-			["workflow", "status", "--json"],
+			["workflow", "status", "--json", "--no-worktree"],
 			projectRoot,
 		);
 		if (run.exitCode !== 0)
@@ -175,7 +175,7 @@ export async function cancelArchonWorkflowRun(
 	try {
 		const result = await runArchonCommand(
 			pi,
-			["workflow", "abandon", runId],
+			["workflow", "abandon", runId, "--no-worktree"],
 			projectCwd,
 		);
 		if (result.exitCode !== 0) {
@@ -198,7 +198,7 @@ export async function findActiveWorkflowRunId(
 ): Promise<string | undefined> {
 	const run = await runArchonCommand(
 		pi,
-		["workflow", "status", "--json"],
+		["workflow", "status", "--json", "--no-worktree"],
 		projectRoot,
 	);
 	if (run.exitCode !== 0)

@@ -17,7 +17,7 @@ const projectWorkflowCache = new Map<string, Promise<string[]>>();
 const projectWorkflowSnapshot = new Map<string, string[]>();
 
 function resolveArchonCli(projectCwd: string): { command: string; args: string[]; cwd: string } {
-  const cmdArgs = ["workflow", "list", "--json", "--cwd", projectCwd];
+  const cmdArgs = ["workflow", "list", "--json", "--no-worktree", "--cwd", projectCwd];
   if (fs.existsSync(`${ARCHON_ROOT}/package.json`)) {
     return { command: "bun", args: ["run", "cli", ...cmdArgs], cwd: ARCHON_ROOT };
   }
@@ -38,7 +38,9 @@ function parseWorkflowListJson(stdout: string): string[] {
         .map((entry) => entry.name)
         .filter((name): name is string => typeof name === "string" && name.length > 0)
         .sort();
-    } catch {}
+    } catch {
+      // continue — try next JSON candidate or full parse
+    }
   }
 
   const start = trimmed.indexOf('{\n  "workflows"');

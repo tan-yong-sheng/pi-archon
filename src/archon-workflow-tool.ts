@@ -915,7 +915,7 @@ async function handleApprove(
 
 	// Use archon workflow approve <runId> [comment] directly.
 	// The CLI handles both approval and execution in the same process.
-	const cliArgs: string[] = ["workflow", "approve", runId];
+	const cliArgs: string[] = ["workflow", "approve", runId, "--no-worktree"];
 	if (comment) {
 		cliArgs.push(comment);
 	}

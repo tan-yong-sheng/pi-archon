@@ -76,15 +76,15 @@ type OverlayView = "progress" | "logs";
 
 // ── Public config ────────────────────────────────────────────
 export interface WorkflowOverlayOptions {
-workflowName: string;
-queryPreview: string;
-dagTracker: DagProgressTracker;
-onCancel?: () => void;
-/** Called when the user presses 'a' while the workflow is paused at an approval gate */
-onApprove?: () => void;
-/** Called when overlay wants to resize */
-onResize?: (handle: OverlayHandle, width: number) => void;
-overlayHandle?: OverlayHandle;
+	workflowName: string;
+	queryPreview: string;
+	dagTracker: DagProgressTracker;
+	onCancel?: () => void;
+	/** Called when the user presses 'a' while the workflow is paused at an approval gate */
+	onApprove?: () => void;
+	/** Called when overlay wants to resize */
+	onResize?: (handle: OverlayHandle, width: number) => void;
+	overlayHandle?: OverlayHandle;
 }
 
 // ── Component ────────────────────────────────────────────────
