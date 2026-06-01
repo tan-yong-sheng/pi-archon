@@ -166,9 +166,7 @@ export interface ArchonApiRunDetail {
 		started_at: string;
 		completed_at: string | null;
 		metadata: Record<string, unknown>;
-		conversation_platform_id: string | null;
-		worker_platform_id?: string | null;
-		parent_platform_id?: string | null;
+		parent_conversation_id: string | null;
 	};
 	events: ArchonApiRunEvent[];
 }
@@ -192,7 +190,7 @@ export async function getRunDetail(
 ): Promise<ArchonApiRunDetail | undefined> {
 	try {
 		// Query the run record
-		const runCmd = `sqlite3 "${ARCHON_DB_PATH}" "SELECT json_object('id', id, 'conversation_id', conversation_id, 'workflow_name', workflow_name, 'status', status, 'working_path', working_path, 'started_at', started_at, 'completed_at', completed_at, 'metadata', CASE WHEN metadata IS NOT NULL THEN json(metadata) ELSE '{}' END, 'conversation_platform_id', conversation_platform_id, 'worker_platform_id', worker_platform_id, 'parent_platform_id', parent_platform_id) FROM remote_agent_workflow_runs WHERE id = '${runId.replace(/'/g, "''")}' LIMIT 1;" -json`;
+		const runCmd = `sqlite3 "${ARCHON_DB_PATH}" "SELECT json_object('id', id, 'conversation_id', conversation_id, 'workflow_name', workflow_name, 'status', status, 'working_path', working_path, 'started_at', started_at, 'completed_at', completed_at, 'metadata', CASE WHEN metadata IS NOT NULL THEN json(metadata) ELSE '{}' END, 'parent_conversation_id', parent_conversation_id) FROM remote_agent_workflow_runs WHERE id = '${runId.replace(/'/g, "''")}' LIMIT 1;" -json`;
 		const { execSync } = await import("child_process");
 		const runResult = execSync(runCmd, {
 			timeout: 3000,
@@ -209,9 +207,7 @@ export async function getRunDetail(
 			started_at: string;
 			completed_at: string | null;
 			metadata: string;
-			conversation_platform_id: string | null;
-			worker_platform_id: string | null;
-			parent_platform_id: string | null;
+			parent_conversation_id: string | null;
 		}>;
 		if (!runRows || runRows.length === 0) return undefined;
 
@@ -278,9 +274,7 @@ export async function getRunDetail(
 				started_at: row.started_at,
 				completed_at: row.completed_at,
 				metadata,
-				conversation_platform_id: row.conversation_platform_id,
-				worker_platform_id: row.worker_platform_id,
-				parent_platform_id: row.parent_platform_id,
+				parent_conversation_id: row.parent_conversation_id,
 			},
 			events,
 		};

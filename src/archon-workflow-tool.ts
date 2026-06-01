@@ -45,7 +45,11 @@ import {
 	findPausedRun,
 } from "./workflow-background";
 import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
-import { listWorkflowsWithDetails, getRunDetail } from "./archon-api";
+import {
+	listWorkflowsWithDetails,
+	getRunDetail,
+	findLatestRunIdForWorkflow,
+} from "./archon-api";
 import { queryRecentRuns, type WorkflowRunRecord } from "./artifact-query";
 import { cancelArchonWorkflowRun } from "./workflow-ops";
 import { fmtElapsed } from "./ui/workflow-overlay";
@@ -73,6 +77,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 			"Use archon_workflow with action='resume' to resume a failed or paused workflow run. Provide the run ID.",
 			"Use archon_workflow with action='approve' to approve a paused workflow at an approval gate. Provide the run ID and optionally a comment. The workflow auto-resumes after approval and its output is delivered as a user message.",
 			"Use archon_workflow with action='reject' to reject a paused workflow at an approval gate. Provide the run ID and a required reason (explaining why the user rejected it). The CLI handles both rejection and optional on_reject resume within the same process.",
+			"Use archon_workflow with action='latest-run' to look up the most recent run ID for a workflow. Provide 'workflow' parameter (workflow name) to find the latest run of that workflow, or 'runId' to get details for a specific run.",
 			"IMPORTANT — APPROVAL GATES REQUIRE HUMAN-IN-LOOP: When a workflow pauses at an approval gate, the pause notification arrives as a user message. You MUST ask the user whether they want to approve or reject — do NOT auto-approve or auto-cancel. Only execute approve/reject after the user explicitly says so.",
 			"When the user asks to create a new workflow, author the YAML in .archon/workflows/ first, then use archon_workflow run to launch it.",
 			"Archon workflows support conditional execution via 'when' expressions, 'trigger_rule' join semantics, structured output via 'output_format' (JSON Schema), approval gates, and loop iteration until completion.",
@@ -88,18 +93,19 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					"approve",
 					"reject",
 					"info",
+					"latest-run",
 				] as const,
 				{
 					description:
 						"Action: 'run' to launch, 'list' to discover, 'status' to check, 'cancel' to stop, " +
 						"'resume' to resume a failed/paused run, 'approve'/'reject' at an approval gate " +
-						"(human-in-loop — must ask user first)",
+						"(human-in-loop — must ask user first), 'latest-run' to find the most recent run ID for a workflow",
 				},
 			),
 			runId: Type.Optional(
 				Type.String({
 					description:
-						"Run ID to check, cancel, resume, approve, or reject (for 'status', 'cancel', 'resume', 'approve', and 'reject' actions).",
+						"Run ID to check, cancel, resume, approve, or reject (for 'status', 'cancel', 'resume', 'approve', 'reject', and 'latest-run' actions).",
 				}),
 			),
 			workflow: Type.Optional(
@@ -136,6 +142,8 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					return await handleCancel(pi, runId, cwd);
 				case "reject":
 					return await handleReject(pi, runId, reason, cwd, ctx);
+				case "latest-run":
+					return await handleLatestRun(runId, workflow, cwd);
 				default:
 					throw new Error(`Unknown action: ${action}`);
 			}
@@ -152,6 +160,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 				resume: "↻ Resume",
 				approve: "✓ Approve",
 				reject: "✗ Reject",
+				"latest-run": "◎ Latest",
 			};
 			const label = actionLabels[action] ?? action;
 			const parts = [
@@ -226,6 +235,15 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 					theme.fg(
 						"dim",
 						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 24)}${details?.reason ? ` · ${String(details?.reason).slice(0, 60)}` : ""}`,
+					),
+				];
+			} else if (action === "latest-run") {
+				const runIdStr = String(details?.runId ?? "");
+				lines = [
+					theme.fg("accent", `◆ archon ▸ latest run`),
+					theme.fg(
+						"dim",
+						`  ${String(details?.workflow ?? "")} · ${runIdStr.slice(0, 32)} · ${String(details?.status ?? "")}${details?.startedAt ? ` · ${String(details?.startedAt).slice(0, 19)}` : ""}`,
 					),
 				];
 			} else if (action === "run") {
@@ -542,6 +560,127 @@ async function handleInfo(
 	throw new Error(
 		`Workflow "${workflow}" not found. Use action='list' to discover available workflows.`,
 	);
+}
+
+async function handleLatestRun(
+	runId?: string,
+	workflow?: string,
+	cwd?: string,
+): Promise<{
+	content: { type: string; text: string }[];
+	details: Record<string, unknown>;
+}> {
+	const projectCwd = cwd || process.cwd();
+
+	// If runId is given, look up that specific run
+	if (runId) {
+		const detail = await getRunDetail(runId);
+		if (!detail) {
+			throw new Error(`Run not found: ${runId}`);
+		}
+		return {
+			content: [
+				{
+					type: "text",
+					text: [
+						`## Run: ${detail.run.workflow_name}`,
+						"",
+						`- **ID:** \`${detail.run.id}\``,
+						`- **Status:** ${detail.run.status}`,
+						`- **Started:** ${detail.run.started_at.slice(0, 19)}`,
+						detail.run.completed_at
+							? `- **Completed:** ${detail.run.completed_at.slice(0, 19)}`
+							: "",
+						detail.run.metadata?.total_cost_usd
+							? `- **Cost:** $${Number(detail.run.metadata.total_cost_usd).toFixed(4)}`
+							: "",
+						detail.events.length > 0
+							? `- **Events:** ${detail.events.length}`
+							: "",
+					]
+						.filter(Boolean)
+						.join("\n"),
+				},
+			],
+			details: {
+				action: "latest-run",
+				runId: detail.run.id,
+				workflow: detail.run.workflow_name,
+				status: detail.run.status,
+				startedAt: detail.run.started_at,
+				completedAt: detail.run.completed_at,
+				costUsd: detail.run.metadata?.total_cost_usd,
+			},
+		};
+	}
+
+	// Otherwise find the latest run for a workflow name
+	if (!workflow) {
+		throw new Error(
+			"Provide either 'runId' (specific run) or 'workflow' (find latest run for a workflow name)",
+		);
+	}
+
+	const foundRunId = await findLatestRunIdForWorkflow(workflow, projectCwd);
+	if (!foundRunId) {
+		throw new Error(
+			`No recent runs found for workflow "${workflow}". The workflow may not have been run yet, or the SQLite DB is unreadable.`,
+		);
+	}
+
+	// Fetch full detail for the found run
+	const detail = await getRunDetail(foundRunId);
+	if (!detail) {
+		// Return what we have even without full detail
+		return {
+			content: [
+				{
+					type: "text",
+					text: `Latest run for **${workflow}**: \`${foundRunId}\``,
+				},
+			],
+			details: {
+				action: "latest-run",
+				runId: foundRunId,
+				workflow,
+			},
+		};
+	}
+
+	return {
+		content: [
+			{
+				type: "text",
+				text: [
+					`## Latest Run: ${detail.run.workflow_name}`,
+					"",
+					`- **ID:** \`${detail.run.id}\``,
+					`- **Status:** ${detail.run.status}`,
+					`- **Started:** ${detail.run.started_at.slice(0, 19)}`,
+					detail.run.completed_at
+						? `- **Completed:** ${detail.run.completed_at.slice(0, 19)}`
+						: "",
+					detail.run.metadata?.total_cost_usd
+						? `- **Cost:** $${Number(detail.run.metadata.total_cost_usd).toFixed(4)}`
+						: "",
+					detail.events.length > 0
+						? `- **Events:** ${detail.events.length}`
+						: "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+			},
+		],
+		details: {
+			action: "latest-run",
+			runId: detail.run.id,
+			workflow: detail.run.workflow_name,
+			status: detail.run.status,
+			startedAt: detail.run.started_at,
+			completedAt: detail.run.completed_at,
+			costUsd: detail.run.metadata?.total_cost_usd,
+		},
+	};
 }
 
 async function handleStatus(
@@ -937,7 +1076,13 @@ async function handleReject(
 	const { runArchonCommand } = await import("./archon-exec");
 	const startedAt = Date.now();
 
-	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree", reason];
+	const cliArgs: string[] = [
+		"workflow",
+		"reject",
+		runId,
+		"--no-worktree",
+		reason,
+	];
 	const result = await runArchonCommand(pi, cliArgs, projectCwd);
 	const durationMs = Date.now() - startedAt;
 	const success = result.exitCode === 0;
