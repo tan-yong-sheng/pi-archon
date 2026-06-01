@@ -300,16 +300,43 @@ class ArchonsDashboard implements Component {
 		const th = this.theme;
 		const items: SelectItem[] = [];
 
-		// ── Active section ──
+		// Separate paused from actively running
 		const activeEntries = [...this.activeRuns.entries()];
-		if (activeEntries.length > 0) {
-			// Section header
+		const pausedEntries = activeEntries.filter(
+			([, e]) => !!e.tracker.approvalPendingNodeId,
+		);
+		const runningEntries = activeEntries.filter(
+			([, e]) => !e.tracker.approvalPendingNodeId,
+		);
+
+		// ── Paused section (needs approval) ──
+		if (pausedEntries.length > 0) {
 			items.push({
-				value: "__section_active__",
-				label: th.fg("accent", th.bold(`◆ Active (${activeEntries.length})`)),
+				value: "__section_paused__",
+				label: th.fg("warning", th.bold(`⏸ Paused (${pausedEntries.length})`)),
 				description: "",
 			});
-			for (const [runId, entry] of activeEntries) {
+			for (const [runId, entry] of pausedEntries) {
+				const elapsed = fmtElapsed(
+					Math.floor((Date.now() - entry.startedAt) / 1000),
+				);
+				const approvalNodeId = entry.tracker.approvalPendingNodeId;
+				items.push({
+					value: `active:${runId}`,
+					label: `${th.bold(entry.workflowName)} ${th.fg("warning", `⏸ paused at ${approvalNodeId ?? "?"}`)} ${th.fg("dim", elapsed)}`,
+					description: `Press Enter to view — ${entry.query.slice(0, 50)}`,
+				});
+			}
+		}
+
+		// ── In-Progress section ──
+		if (runningEntries.length > 0) {
+			items.push({
+				value: "__section_active__",
+				label: th.fg("accent", th.bold(`▶ In-Progress (${runningEntries.length})`)),
+				description: "",
+			});
+			for (const [runId, entry] of runningEntries) {
 				const elapsed = fmtElapsed(
 					Math.floor((Date.now() - entry.startedAt) / 1000),
 				);

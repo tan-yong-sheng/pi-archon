@@ -302,10 +302,9 @@ export class WorkflowOverlay implements Component {
 		const tabHint = " · Tab=scroll";
 
 		// When paused at an approval gate, show an approve keybinding hint
-		const approveHint =
-			this.tracker.approvalPendingNodeId
-				? " · a=approve r=reject"
-				: "";
+		const approveHint = this.tracker.approvalPendingNodeId
+			? " · a=approve r=reject"
+			: "";
 
 		const footerHint = this.tracker.approvalPendingNodeId
 			? th.fg(
