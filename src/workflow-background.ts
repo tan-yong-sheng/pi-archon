@@ -32,6 +32,7 @@ import {
 	renderArtifactsSection,
 } from "./artifact-query";
 import { queryNodeOutputs, findLatestRunIdForWorkflow } from "./archon-api";
+import { ArchonSSEClient, mapSSEToDagEvent, type ArchonSSEEvent } from "./archon-sse";
 import {
 	findActiveWorkflowRunId,
 	cancelArchonWorkflowRun,
@@ -57,6 +58,7 @@ export interface ActiveWorkflowRun {
 	loopPollTimer?: ReturnType<typeof setInterval>;
 	statusTimer?: ReturnType<typeof setInterval>;
 	apiPollTimer?: ReturnType<typeof setInterval>;
+	sseClient?: ArchonSSEClient;
 	onComplete?: (outcome: CommandWorkflowOutcome) => void;
 }
 
@@ -279,6 +281,50 @@ export function runWorkflowBackground(
 				}, 5000);
 				entry.apiPollTimer = apiPollTimer;
 
+				// ── SSE: real-time event stream from Archon server ────────────
+				// Connect to /api/stream/__dashboard__ for live workflow events.
+				// SSE events feed directly into the tracker (zero latency),
+				// and node_completed triggers an immediate node_output query.
+				const sseClient = new ArchonSSEClient();
+				let sseConnected = false;
+				sseClient.onEvent = (event: ArchonSSEEvent) => {
+					// Map SSE event to DagEvent and apply to tracker
+					const dagEvent = mapSSEToDagEvent(event);
+					if (dagEvent) tracker.applyEvent(dagEvent);
+					tui.requestRender();
+
+					// On node_completed, immediately query the API for node_output
+					if (event.type === "dag_node" && event.status === "completed") {
+						findLatestRunIdForWorkflow(workflow, cwd).then((runId) => {
+							if (!runId) return;
+							queryNodeOutputs(runId).then((outputs) => {
+								for (const n of outputs) {
+									if (n.output && n.nodeId === event.nodeId) {
+										tracker.setNodeOutput(n.nodeId, n.output);
+									}
+								}
+								tui.requestRender();
+							}).catch(() => {});
+						}).catch(() => {});
+					}
+
+					// On workflow_artifact, log for later artifact query
+					if (event.type === "workflow_artifact") {
+						tracker.applyEvent({
+							type: "workflow_artifact" as never,
+							runId: event.runId,
+						} as never);
+					}
+				};
+				sseClient.onConnectionChange = (connected: boolean) => {
+					sseConnected = connected;
+				};
+				// Connect async — don't block if server isn't running
+				sseClient.connect().then((ok) => {
+					if (ok) entry.sseClient = sseClient;
+				}).catch(() => {});
+				entry.sseClient = sseClient; // store ref even if connecting
+
 				// ── Handle process exit ───────────────────────────
 				proc.on("close", async (exitCode) => {
 					const durationMs = Date.now() - entry.startedAt;
@@ -301,6 +347,7 @@ export function runWorkflowBackground(
 					clearInterval(statusTimer);
 					clearInterval(loopPollTimer);
 				clearInterval(apiPollTimer);
+					entry.sseClient?.disconnect();
 
 					// Dismiss overlay after a brief delay so the user sees "✓ complete"
 					setTimeout(() => {
@@ -515,6 +562,7 @@ export async function cancelRun(runId: string): Promise<void> {
 	if (entry.statusTimer) clearInterval(entry.statusTimer);
 	if (entry.loopPollTimer) clearInterval(entry.loopPollTimer);
 		if (entry.apiPollTimer) clearInterval(entry.apiPollTimer);
+		entry.sseClient?.disconnect();
 
 	// Post cancellation message
 	entry.tracker.applyEvent({ type: "workflow_failed", error: "cancelled" });

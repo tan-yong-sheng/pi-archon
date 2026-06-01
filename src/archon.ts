@@ -40,6 +40,20 @@ export {
 	type ArchonApiRunEvent,
 } from "./archon-api";
 
+// ── SSE real-time event stream ────────────────────────────────
+export {
+	ArchonSSEClient,
+	mapSSEToDagEvent,
+	getSharedSSEClient,
+	disconnectSharedSSE,
+	type ArchonSSEEvent,
+	type SSEWorkflowStatusEvent,
+	type SSEDagNodeEvent,
+	type SSEToolActivityEvent,
+	type SSEWorkflowStepEvent,
+	type SSEWorkflowArtifactEvent,
+} from "./archon-sse";
+
 // ── Artifact & history queries ───────────────────────────────
 export {
 	findLatestRunId,

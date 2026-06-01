@@ -262,11 +262,12 @@ export type DagEvent =
 			type: "node_completed";
 			nodeId: string;
 			duration: string;
+			durationMs?: number;
 			costUsd?: number;
 			numTurns?: number;
 	  }
-	| { type: "node_failed"; nodeId: string; error: string }
-	| { type: "node_skipped"; nodeId: string; reason: string }
+	| { type: "node_failed"; nodeId: string; nodeName?: string; error: string; }
+	| { type: "node_skipped"; nodeId: string; nodeName?: string; reason: string; }
 	| { type: "approval_pending"; nodeId: string; message: string }
 	| { type: "tool_started"; stepName: string; toolName: string }
 	| {

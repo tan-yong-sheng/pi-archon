@@ -1,7 +1,14 @@
 import type { ArchonEndpointConfig, LogLevelConfig } from "./types";
 
 export const ARCHON_ROOT = process.env.ARCHON_ROOT?.trim() || "/opt/archon";
-export const ARCHON_DEFAULT_HOME = `${process.env.HOME || process.cwd()}/.archon`;
+/** Archon home directory — matches @archon/paths getArchonHome():
+ *  1. ARCHON_HOME env var
+ *  2. ~/.archon (default for brew/npm installs)
+ *  Docker uses /.archon but that's handled inside the Archon binary.
+ */
+export const ARCHON_DEFAULT_HOME =
+	process.env.ARCHON_HOME?.trim() ||
+	`${process.env.HOME || process.cwd()}/.archon`;
 export const ARCHON_ENDPOINT_CONFIG_NAMES = [
 	".pi-archon.yaml",
 	".pi-archon.yml",
@@ -29,7 +36,11 @@ export const RUNTIME_FORCE_KILL_WAIT_MS = 1000;
 export const RUNTIME_LOG_TAIL_LINES = 80;
 export const RUNTIME_STATUS_LOG_LINES = 30;
 export const RUNTIME_FAILURE_LOG_LINES = 100;
-export const ARCHON_DB_PATH = `${ARCHON_ROOT}/archon.db`;
+/** Path to archon.db — always inside ARCHON_DEFAULT_HOME (~/.archon),
+ *  NOT ARCHON_ROOT (/opt/archon which is the source/install root).
+ *  The DB lives in the user's archon home, matching archon serve behavior.
+ */
+export const ARCHON_DB_PATH = `${ARCHON_DEFAULT_HOME}/archon.db`;
 export const DEFAULT_QUERY = "decompile the next function";
 export const ARCHON_TITLE = "## Archon";
 export const ARCHON_STATUS_TITLE = "## Archon status";
