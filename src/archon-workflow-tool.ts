@@ -114,6 +114,18 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 						"Workflow name for 'run' and 'info' actions. Must match a .archon/workflows/*.yaml file.",
 				}),
 			),
+			query: Type.Optional(
+				Type.String({
+					description:
+						"Optional launch input / arguments for 'run'. Passed through to the workflow as $ARGUMENTS.",
+				}),
+			),
+			comment: Type.Optional(
+				Type.String({
+					description:
+						"Optional comment for 'approve' and 'resume' workflows. Passed through to the workflow CLI as an approval comment.",
+				}),
+			),
 			reason: Type.Optional(
 				Type.String({
 					description:
