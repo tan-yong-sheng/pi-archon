@@ -1039,6 +1039,12 @@ async function handleReject(
 		}
 	}
 
+	const parentLocalRunId = activeEntry
+		? [...getActiveRuns().entries()].find(
+				([, entry]) => entry === activeEntry,
+			)?.[0]
+		: undefined;
+
 	// Launch in background if UI available
 	if (ctx?.hasUI && ctx.ui && workflowName) {
 		// Dismiss paused-run overlay if we found one
@@ -1050,8 +1056,12 @@ async function handleReject(
 			workflowName,
 			reason,
 			ctx as never,
+			parentLocalRunId ? { parentLocalRunId } : undefined,
 		);
 		if (localRunId) {
+			if (activeEntry) {
+				activeEntry.runState = "approved_resuming";
+			}
 			return {
 				content: [
 					{
@@ -1161,6 +1171,12 @@ async function handleApprove(
 		}
 	}
 
+	const parentLocalRunId = activeEntry
+		? [...getActiveRuns().entries()].find(
+				([, entry]) => entry === activeEntry,
+			)?.[0]
+		: undefined;
+
 	// Launch in background if UI available
 	if (ctx?.hasUI && ctx.ui && workflowName) {
 		// Dismiss paused-run overlay if we found one (replaced by new approve overlay)
@@ -1172,15 +1188,19 @@ async function handleApprove(
 			workflowName,
 			comment,
 			ctx as never,
+			parentLocalRunId ? { parentLocalRunId } : undefined,
 		);
 		if (localRunId) {
+			if (activeEntry) {
+				activeEntry.runState = "approved_resuming";
+			}
 			return {
 				content: [
 					{
 						type: "text",
 						text:
 							`Workflow **${workflowName}** (${runId}) approved${comment ? `: ${comment}` : ""}. ` +
-							`Auto-resuming in background. The result will be delivered automatically.`,
+							`Approved · resuming in background. The result will be delivered automatically.`,
 					},
 				],
 				details: {

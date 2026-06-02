@@ -63,9 +63,20 @@ export interface ActiveWorkflowRun {
 	apiPollTimer?: ReturnType<typeof setInterval>;
 	onComplete?: (outcome: CommandWorkflowOutcome) => void;
 
+	/** UI-only lifecycle state for the current visible run entry. */
+	runState?: "running" | "paused" | "approved_resuming";
+
+	/** Whether this entry should appear in the /archons dashboard. */
+	visibleInDashboard?: boolean;
+
 	/** Archon DB UUID for this workflow run — set after the workflow pauses
 	 *  at an approval gate so the approve/resume action can look it up. */
 	archonRunId?: string;
+
+	/** When resuming a paused run, points to the original local pi-archon run id. */
+	parentLocalRunId?: string;
+	/** When resuming a paused run, points to the original Archon run id. */
+	resumeParentRunId?: string;
 }
 
 /** Global map of currently-running workflow runs, keyed by a unique run ID. */
@@ -128,6 +139,10 @@ function runBackgroundCli(
 	query: string,
 	cliArgs: string[],
 	ctx: ExtensionCommandContext,
+	options?: {
+		parentLocalRunId?: string;
+		visibleInDashboard?: boolean;
+	},
 ): string | null {
 	if (!ctx.hasUI) {
 		return null;
@@ -138,11 +153,16 @@ function runBackgroundCli(
 	const tracker = new DagProgressTracker();
 	const queryPreview = query.length > 72 ? `${query.slice(0, 72)}…` : query;
 
+	const parentLocalRunId = options?.parentLocalRunId;
 	const entry: ActiveWorkflowRun = {
 		workflowName: workflow,
 		query,
 		startedAt: Date.now(),
 		tracker,
+		runState: parentLocalRunId ? "approved_resuming" : "running",
+		visibleInDashboard: options?.visibleInDashboard ?? true,
+		archonRunId: parentLocalRunId,
+		resumeParentRunId: parentLocalRunId,
 	};
 	activeRuns.set(localRunId, entry);
 
@@ -168,13 +188,15 @@ function runBackgroundCli(
 							// User pressed 'a' on a paused workflow — approve it directly
 							const archonRunId = entry.archonRunId;
 							if (!archonRunId) return;
+							entry.runState = "approved_resuming";
 							// Dismiss the paused overlay
 							handle.hide();
 							// Clear the old paused entry's remaining timer + status
 							if (entry.statusTimer) clearInterval(entry.statusTimer);
 							ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
 							ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
-							activeRuns.delete(localRunId);
+							// Keep the paused entry visible as the same workflow row while resuming.
+							entry.runState = "approved_resuming";
 							// Launch approve + auto-resume in background via CLI
 							// This creates a new overlay/entry for the resumed execution
 							approveWorkflowBackground(
@@ -183,6 +205,10 @@ function runBackgroundCli(
 								workflow,
 								undefined,
 								ctx as never,
+								{
+									visibleInDashboard: false,
+									parentLocalRunId: localRunId,
+								},
 							).catch(() => {
 								/* best-effort */
 							});
@@ -197,7 +223,8 @@ function runBackgroundCli(
 							if (entry.statusTimer) clearInterval(entry.statusTimer);
 							ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
 							ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
-							activeRuns.delete(localRunId);
+							// Keep the paused entry visible as the same workflow row while rejecting.
+							entry.runState = "approved_resuming";
 							// Launch reject in background via CLI
 							rejectWorkflowBackground(
 								pi,
@@ -205,6 +232,10 @@ function runBackgroundCli(
 								workflow,
 								undefined,
 								ctx as never,
+								{
+									visibleInDashboard: false,
+									parentLocalRunId: localRunId,
+								},
 							).catch(() => {
 								/* best-effort */
 							});
@@ -347,6 +378,7 @@ function runBackgroundCli(
 
 					if (approvalNodeId && exitCode === 0) {
 						// ── Approval pending — workflow paused ──
+						entry.runState = "paused";
 						// Don't mark completed — keep overlay alive showing paused state.
 						// Inform the agent so it can call approve/reject with the Archon UUID.
 						clearInterval(pollTimer);
@@ -441,6 +473,24 @@ function runBackgroundCli(
 					clearInterval(pollTimer);
 					clearInterval(statusTimer);
 					clearInterval(loopPollTimer);
+
+					// If this run is the hidden resuming subprocess, clear the parent visible row too.
+					if (parentLocalRunId) {
+						const parentEntry = activeRuns.get(parentLocalRunId);
+						if (parentEntry) {
+							parentEntry.overlayHandle?.hide();
+							if (parentEntry.pollTimer) clearInterval(parentEntry.pollTimer);
+							if (parentEntry.loopPollTimer)
+								clearInterval(parentEntry.loopPollTimer);
+							if (parentEntry.statusTimer)
+								clearInterval(parentEntry.statusTimer);
+							if (parentEntry.apiPollTimer)
+								clearInterval(parentEntry.apiPollTimer);
+							parentEntry.visibleInDashboard = false;
+							ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+							ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
+						}
+					}
 
 					// Dismiss overlay after a brief delay so the user sees "✓ complete"
 					setTimeout(() => {
@@ -566,6 +616,23 @@ function runBackgroundCli(
 						);
 					}
 					ctx.ui.notify?.(`Archon ${workflow} failed: ${err.message}`, "error");
+					if (parentLocalRunId) {
+						const parentEntry = activeRuns.get(parentLocalRunId);
+						if (parentEntry) {
+							parentEntry.overlayHandle?.hide();
+							if (parentEntry.pollTimer) clearInterval(parentEntry.pollTimer);
+							if (parentEntry.loopPollTimer)
+								clearInterval(parentEntry.loopPollTimer);
+							if (parentEntry.statusTimer)
+								clearInterval(parentEntry.statusTimer);
+							if (parentEntry.apiPollTimer)
+								clearInterval(parentEntry.apiPollTimer);
+							parentEntry.visibleInDashboard = false;
+							ctx.ui.setStatus?.(STATUS_KEY_RUNNING, undefined);
+							ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
+							activeRuns.delete(parentLocalRunId);
+						}
+					}
 					activeRuns.delete(localRunId);
 				});
 
@@ -639,6 +706,7 @@ export function resumeWorkflowBackground(
 		`resume ${workflowName}`,
 		cliArgs,
 		ctx,
+		{ visibleInDashboard: true },
 	);
 }
 
@@ -659,6 +727,10 @@ export async function approveWorkflowBackground(
 	workflowName: string,
 	comment: string | undefined,
 	ctx: ExtensionCommandContext,
+	options?: {
+		parentLocalRunId?: string;
+		visibleInDashboard?: boolean;
+	},
 ): Promise<string | null> {
 	// Build CLI args: archon workflow approve <runId> [comment]
 	const cliArgs: string[] = ["workflow", "approve", runId, "--no-worktree"];
@@ -671,6 +743,11 @@ export async function approveWorkflowBackground(
 		comment ? `approve: ${comment.slice(0, 60)}` : "approve",
 		cliArgs,
 		ctx,
+		{
+			...options,
+			parentLocalRunId: options?.parentLocalRunId ?? runId,
+			visibleInDashboard: options?.visibleInDashboard ?? false,
+		},
 	);
 }
 
@@ -686,6 +763,10 @@ export async function rejectWorkflowBackground(
 	workflowName: string,
 	reason: string | undefined,
 	ctx: ExtensionCommandContext,
+	options?: {
+		parentLocalRunId?: string;
+		visibleInDashboard?: boolean;
+	},
 ): Promise<string | null> {
 	// Build CLI args: archon workflow reject <runId> [reason]
 	const cliArgs: string[] = ["workflow", "reject", runId, "--no-worktree"];
@@ -698,6 +779,11 @@ export async function rejectWorkflowBackground(
 		reason ? `reject: ${reason.slice(0, 60)}` : "reject",
 		cliArgs,
 		ctx,
+		{
+			...options,
+			parentLocalRunId: options?.parentLocalRunId ?? runId,
+			visibleInDashboard: options?.visibleInDashboard ?? false,
+		},
 	);
 }
 

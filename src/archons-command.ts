@@ -300,13 +300,25 @@ class ArchonsDashboard implements Component {
 		const th = this.theme;
 		const items: SelectItem[] = [];
 
-		// Separate paused from actively running
-		const activeEntries = [...this.activeRuns.entries()];
+		// Separate paused, approved-resuming, and actively running
+		const activeEntries = [...this.activeRuns.entries()].filter(
+			([, e]) => e.visibleInDashboard !== false,
+		);
 		const pausedEntries = activeEntries.filter(
-			([, e]) => !!e.tracker.approvalPendingNodeId,
+			([, e]) =>
+				e.runState === "paused" ||
+				(e.runState !== "approved_resuming" &&
+					!!e.tracker.approvalPendingNodeId),
+		);
+		const resumingEntries = activeEntries.filter(
+			([, e]) => e.runState === "approved_resuming",
 		);
 		const runningEntries = activeEntries.filter(
-			([, e]) => !e.tracker.approvalPendingNodeId,
+			([, e]) =>
+				e.runState === "running" ||
+				(e.runState !== "paused" &&
+					e.runState !== "approved_resuming" &&
+					!e.tracker.approvalPendingNodeId),
 		);
 
 		// ── Paused section (needs approval) ──
@@ -329,11 +341,36 @@ class ArchonsDashboard implements Component {
 			}
 		}
 
+		// ── Approved / Resuming section ──
+		if (resumingEntries.length > 0) {
+			items.push({
+				value: "__section_resuming__",
+				label: th.fg(
+					"accent",
+					th.bold(`↻ Approved · Resuming (${resumingEntries.length})`),
+				),
+				description: "",
+			});
+			for (const [runId, entry] of resumingEntries) {
+				const elapsed = fmtElapsed(
+					Math.floor((Date.now() - entry.startedAt) / 1000),
+				);
+				items.push({
+					value: `active:${runId}`,
+					label: `${th.bold(entry.workflowName)} ${th.fg("accent", "↻ approved · resuming")} ${th.fg("dim", elapsed)}`,
+					description: entry.query.slice(0, 60),
+				});
+			}
+		}
+
 		// ── In-Progress section ──
 		if (runningEntries.length > 0) {
 			items.push({
 				value: "__section_active__",
-				label: th.fg("accent", th.bold(`▶ In-Progress (${runningEntries.length})`)),
+				label: th.fg(
+					"accent",
+					th.bold(`▶ In-Progress (${runningEntries.length})`),
+				),
 				description: "",
 			});
 			for (const [runId, entry] of runningEntries) {
