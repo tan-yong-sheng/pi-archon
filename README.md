@@ -38,7 +38,7 @@ npm install -g @mariozechner/pi-coding-agent
 Install directly from this repository:
 
 ```bash
-pi install -l git:github.com/tan-yong-sheng/pi-archon
+pi install git:github.com/tan-yong-sheng/pi-archon
 ```
 
 Then reload Pi:
