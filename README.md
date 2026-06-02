@@ -10,22 +10,22 @@
 </p>
 <!-- markdownlint-enable MD033 MD041 -->
 
-`pi-archon` adds an Archon workflow dashboard and an `archon_workflow` tool to Pi so you can launch, inspect, approve, reject, and monitor workflows without leaving your Pi session.
+`pi-archon` adds an Archon workflow dashboard and an `archon_workflow` tool to Pi so you can launch, inspect, approve, reject, and monitor workflows from inside your Pi session.
 
 ## Features
 
 - **`/archons` dashboard** for launching and monitoring workflows.
 - **`archon_workflow` tool** for agent-driven workflow control.
 - **Local workflow discovery** from `.archon/workflows`.
-- **Shared workflow discovery** from the Archon CLI.
+- **Shared and bundled workflow discovery** via the Archon CLI.
 - **Approval-gate support** for pause, approve, reject, and resume flows.
 - **Artifact and run inspection** for completed and in-progress workflows.
 
 ## Requirements
 
 - Node.js 20.6 or newer
-- Pi Coding Agent installed
-- Archon installed locally and available to the extension
+- Pi Coding Agent
+- Archon installed locally
 
 If you do not have Pi installed yet:
 
@@ -92,7 +92,7 @@ Workflow YAML files live in:
 .archon/workflows/
 ```
 
-A workflow can accept user input through Archon's existing argument flow. If a workflow needs parameters, pass them when launching it instead of inventing a separate input system.
+Workflows can accept user input through Archon's existing argument flow. If a workflow needs parameters, pass them when launching it instead of inventing a separate input system.
 
 ## Development
 
@@ -106,7 +106,7 @@ pnpm test
 
 - This extension does not bundle Archon itself.
 - If a workflow pauses at an approval gate, ask the user whether to approve or reject before taking action.
-- The repository is intentionally focused on the current `/archons` dashboard and `archon_workflow` tool; older `/archon` command-tree and server/web sections are no longer part of the primary user flow.
+- The primary user flow is the `/archons` dashboard plus the `archon_workflow` tool.
 
 ## License
 
