@@ -1,78 +1,44 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-    <a href="https://github.com/coleam00/Archon">
-        <img src="assets/logo.png" alt="Archon" height="84" />
-    </a>
-    <span>&nbsp;&nbsp;&nbsp;</span>
-    <a href="https://pi.dev">
-        <img src="assets/pi-logo.png" alt="Pi" height="84" />
-    </a>
+  <img src="assets/logo.png" alt="pi-archon" height="84" />
 </p>
 
 <h1 align="center">pi-archon</h1>
 
 <p align="center">
-    <a href="https://github.com/loopyd/pi-archon/releases/latest">
-        <img src="https://img.shields.io/github/v/release/loopyd/pi-archon?style=for-the-badge&logo=github&label=release" alt="GitHub release" />
-    </a>
-    <a href="https://www.npmjs.com/package/@saber7ooth/pi-archon">
-        <img src="https://img.shields.io/npm/v/%40saber7ooth%2Fpi-archon?style=for-the-badge&logo=npm&label=npm" alt="npm version" />
-    </a>
-</p>
-
-<p align="center">
-    A friendly Pi Coding Agent extension for running Archon workflows inside your project.
+  Archon workflow integration for the Pi Coding Agent.
 </p>
 <!-- markdownlint-enable MD033 MD041 -->
 
-This package adds an `/archon` command to Pi so you can use Archon workflows without leaving your Pi session.
+`pi-archon` adds an Archon workflow dashboard and an `archon_workflow` tool to Pi so you can launch, inspect, approve, reject, and monitor workflows without leaving your Pi session.
 
-If you already like the original [Archon](https://github.com/coleam00/Archon) project and want a smoother day-to-day experience inside Pi, this package is the bridge.
+## Features
 
-## Table of Contents
+- **`/archons` dashboard** for launching and monitoring workflows.
+- **`archon_workflow` tool** for agent-driven workflow control.
+- **Local workflow discovery** from `.archon/workflows`.
+- **Shared workflow discovery** from the Archon CLI.
+- **Approval-gate support** for pause, approve, reject, and resume flows.
+- **Artifact and run inspection** for completed and in-progress workflows.
 
-- [Table of Contents](#table-of-contents)
-- [What You Get](#what-you-get)
-- [Before You Install](#before-you-install)
-- [Install With Pi](#install-with-pi)
-- [Use It In Pi](#use-it-in-pi)
-- [Helpful Commands](#helpful-commands)
-  - [Workflow Commands](#workflow-commands)
-  - [Project Commands](#project-commands)
-  - [Server and Web Commands](#server-and-web-commands)
-- [Install From Another Source](#install-from-another-source)
-- [Good To Know](#good-to-know)
-- [License](#license)
+## Requirements
 
-## What You Get
+- Node.js 20.6 or newer
+- Pi Coding Agent installed
+- Archon installed locally and available to the extension
 
-- A ready-to-use `/archon` command inside Pi.
-- Fast workflow shortcuts for planning, implementation, and validation.
-- Handy project helpers for status, cleanup, server, and web tasks.
-- A setup that works naturally with an existing Archon workspace.
-
-## Before You Install
-
-You will want these in place first:
-
-1. Pi Coding Agent installed.
-2. A working Archon setup or Archon CLI on your machine.
-3. A project where you want Pi and Archon to work together.
-
-If you do not have Pi yet, install it with:
+If you do not have Pi installed yet:
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent
 ```
 
-Then open Pi in your project and sign in with `/login` or your preferred provider setup.
+## Install
 
-## Install With Pi
-
-From your project folder, run:
+Install directly from this repository:
 
 ```bash
-pi install -l npm:@saber7ooth/pi-archon
+pi install -l git:github.com/tan-yong-sheng/pi-archon
 ```
 
 Then reload Pi:
@@ -81,77 +47,66 @@ Then reload Pi:
 /reload
 ```
 
-To confirm the extension loaded, run:
+## Use
+
+### Dashboard
+
+Open the workflow dashboard:
 
 ```text
-/archon help
+/archons
 ```
 
-## Use It In Pi
+From the dashboard you can:
 
-Most people will start here:
+- launch workflows
+- view active and paused runs
+- inspect run details and artifacts
+- approve or reject paused workflows
+
+### Workflow tool
+
+The `archon_workflow` tool supports these actions:
+
+- `run` — launch a workflow
+- `list` — list available workflows
+- `info` — show a workflow definition
+- `status` — show workflow status
+- `cancel` — cancel a run
+- `resume` — resume a run
+- `approve` — approve a paused run
+- `reject` — reject a paused run
+- `latest-run` — find the most recent run for a workflow
+
+Useful parameters:
+
+- `query` — optional launch input for `run`
+- `comment` — optional approve comment
+- `reason` — required reject reason
+
+## Writing workflows
+
+Workflow YAML files live in:
 
 ```text
-/archon plan add a deployment checklist
-/archon implement wire this feature into the dashboard
-/archon validate review the changes and look for gaps
+.archon/workflows/
 ```
 
-That gives you the basic Archon loop inside Pi without extra setup noise.
+A workflow can accept user input through Archon's existing argument flow. If a workflow needs parameters, pass them when launching it instead of inventing a separate input system.
 
-## Helpful Commands
+## Development
 
-Here are the commands you are most likely to use.
-
-### Workflow Commands
-
-- `/archon plan <your request>`
-- `/archon implement <your request>`
-- `/archon validate <your request>`
-
-### Project Commands
-
-- `/archon status` checks whether the project looks ready.
-- `/archon cleanup` runs the cleanup pipeline.
-- `/archon sync-submodules` updates submodules.
-
-### Server and Web Commands
-
-- `/archon server start`
-- `/archon server status`
-- `/archon server stop`
-- `/archon web start`
-- `/archon web status`
-- `/archon web stop`
-
-## Install From Another Source
-
-If you would rather install from git or from a local path, Pi supports that too.
-
-From git:
+Run the local checks with:
 
 ```bash
-pi install -l git:github.com/loopyd/pi-archon
+pnpm test
 ```
 
-From a local folder:
+## Notes
 
-```bash
-pi install -l /absolute/path/to/pi-archon
-```
-
-For one-off local testing:
-
-```bash
-pi -e /absolute/path/to/pi-archon
-```
-
-## Good To Know
-
-- This package does not bundle Archon itself. You still need Archon available locally.
-- The cleanup command is powerful and can change your git state, so use it intentionally.
-- Pi packages run with full system access, so only install packages you trust.
-- If you want the upstream project, start with [coleam00/Archon](https://github.com/coleam00/Archon).
+- This extension does not bundle Archon itself.
+- If a workflow pauses at an approval gate, ask the user whether to approve or reject before taking action.
+- The repository is intentionally focused on the current `/archons` dashboard and `archon_workflow` tool; older `/archon` command-tree and server/web sections are no longer part of the primary user flow.
 
 ## License
 
