@@ -181,6 +181,7 @@ function runBackgroundCli(
 						workflowName: workflow,
 						queryPreview,
 						dagTracker: tracker,
+						getRunState: () => entry.runState,
 						onCancel: () => {
 							void cancelRun(localRunId);
 						},

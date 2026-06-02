@@ -84,6 +84,8 @@ export interface WorkflowOverlayOptions {
 	onApprove?: () => void;
 	/** Called when the user presses 'r' while the workflow is paused at an approval gate */
 	onReject?: () => void;
+	/** Live lifecycle state from the active run entry, if available. */
+	getRunState?: () => "running" | "paused" | "approved_resuming" | undefined;
 	/** Called when overlay wants to resize */
 	onResize?: (handle: OverlayHandle, width: number) => void;
 	overlayHandle?: OverlayHandle;
@@ -97,6 +99,11 @@ export class WorkflowOverlay implements Component {
 	private readonly onCancel?: () => void;
 	private readonly onApprove?: () => void;
 	private readonly onReject?: () => void;
+	private readonly getRunState?: () =>
+		| "running"
+		| "paused"
+		| "approved_resuming"
+		| undefined;
 	private theme: Theme;
 	private startedAt: number;
 	private _expanded = false;
@@ -121,6 +128,7 @@ export class WorkflowOverlay implements Component {
 		this.onCancel = opts.onCancel;
 		this.onApprove = opts.onApprove;
 		this.onReject = opts.onReject;
+		this.getRunState = opts.getRunState;
 		this.theme = theme;
 		this.startedAt = Date.now();
 	}
@@ -186,16 +194,23 @@ export class WorkflowOverlay implements Component {
 		const innerWidth = w - 2;
 
 		// ── Section 1: Header ──────────────────────────────
-		const isPaused = !!tracker.approvalPendingNodeId;
+		const lifecycleState = this.getRunState?.();
+		const isPaused =
+			lifecycleState === "paused" ||
+			(!!tracker.approvalPendingNodeId &&
+				lifecycleState !== "approved_resuming");
+		const isApprovedResuming = lifecycleState === "approved_resuming";
 		const statusIcon = isPaused
 			? th.fg("warning", "⏸")
-			: tracker.workflowDone
-				? tracker.workflowError
-					? th.fg("error", "✗")
-					: th.fg("success", "✓")
-				: th.fg("accent", "◆");
+			: isApprovedResuming
+				? th.fg("accent", "↻")
+				: tracker.workflowDone
+					? tracker.workflowError
+						? th.fg("error", "✗")
+						: th.fg("success", "✓")
+					: th.fg("accent", "◆");
 
-		const titleText = `${statusIcon} ${this.workflowName}${isPaused ? th.fg("dim", " paused") : ""}`;
+		const titleText = `${statusIcon} ${this.workflowName}${isPaused ? th.fg("dim", " paused") : isApprovedResuming ? th.fg("dim", " approved · resuming") : ""}`;
 		const timeText = tracker.workflowDone ? elapsed : progress;
 		lines.push(border("╭") + border("─".repeat(innerWidth)) + border("╮"));
 		lines.push(
@@ -302,11 +317,9 @@ export class WorkflowOverlay implements Component {
 		const tabHint = " · Tab=scroll";
 
 		// When paused at an approval gate, show an approve keybinding hint
-		const approveHint = this.tracker.approvalPendingNodeId
-			? " · a=approve r=reject"
-			: "";
+		const approveHint = isPaused ? " · a=approve r=reject" : "";
 
-		const footerHint = this.tracker.approvalPendingNodeId
+		const footerHint = isPaused
 			? th.fg(
 					"dim",
 					` Esc=abandon · e=expand${approveHint}${scrollHint}${enterHint}${tabHint} `,

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ARCHON_ROOT, EXEC_TIMEOUT_MS } from "./constants";
+import { ARCHON_DEFAULT_HOME } from "./constants";
 
 interface WorkflowListJsonEntry {
 	name?: string;
@@ -110,17 +111,24 @@ export function peekProjectWorkflowNames(projectCwd?: string): string[] {
 	return projectWorkflowSnapshot.get(cwd) ?? [];
 }
 
-export function readProjectWorkflowNamesFromDisk(
-	projectCwd?: string,
-): string[] {
-	const cwd = projectCwd || process.cwd();
-	const dir = `${cwd}/.archon/workflows`;
+function readWorkflowNamesFromDir(dir: string): string[] {
 	if (!fs.existsSync(dir)) return [];
 	return fs
 		.readdirSync(dir)
 		.filter((name) => /\.ya?ml$/i.test(name))
 		.map((name) => name.replace(/\.ya?ml$/i, ""))
 		.sort();
+}
+
+export function readProjectWorkflowNamesFromDisk(
+	projectCwd?: string,
+): string[] {
+	const cwd = projectCwd || process.cwd();
+	return readWorkflowNamesFromDir(`${cwd}/.archon/workflows`);
+}
+
+export function readHomeWorkflowNamesFromDisk(): string[] {
+	return readWorkflowNamesFromDir(`${ARCHON_DEFAULT_HOME}/workflows`);
 }
 
 export async function refreshProjectWorkflowNames(

@@ -114,10 +114,12 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 						"Workflow name for 'run' and 'info' actions. Must match a .archon/workflows/*.yaml file.",
 				}),
 			),
-			reason: Type.String({
-				description:
-					"Reason for rejection (required for 'reject' action). The on_reject prompt in the workflow will receive this via $REJECTION_REASON.",
-			}),
+			reason: Type.Optional(
+				Type.String({
+					description:
+						"Reason for rejection (required only for 'reject' action). The on_reject prompt in the workflow will receive this via $REJECTION_REASON.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			const { action, workflow, query, runId, comment, reason } = params;
@@ -137,11 +139,9 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 				case "approve":
 					return await handleApprove(pi, runId, comment, cwd, ctx);
 				case "reject":
-					return await handleReject(pi, runId, comment, cwd, ctx);
+					return await handleReject(pi, runId, reason, cwd, ctx);
 				case "cancel":
 					return await handleCancel(pi, runId, cwd);
-				case "reject":
-					return await handleReject(pi, runId, reason, cwd, ctx);
 				case "latest-run":
 					return await handleLatestRun(runId, workflow, cwd);
 				default:
@@ -432,7 +432,7 @@ async function handleList(cwd?: string): Promise<{
 
 		const sourceOrder: string[] = ["project", "global", "bundled"];
 		const sourceLabels: Record<string, string> = {
-			project: "Project",
+			project: "Local",
 			global: "Global",
 			bundled: "Bundled",
 		};
@@ -451,7 +451,15 @@ async function handleList(cwd?: string): Promise<{
 					.trim();
 				const modelTag = w.model ? ` [${w.model}]` : "";
 				const providerTag = w.provider ? ` via ${w.provider}` : "";
-				lines.push(`- **\`${w.name}\`**${modelTag} — ${desc}${providerTag}`);
+				const sourceTag =
+					w.source === "project"
+						? " [Local]"
+						: w.source === "global"
+							? " [Global]"
+							: " [Bundled]";
+				lines.push(
+					`- **\`${w.name}\`**${sourceTag}${modelTag} — ${desc}${providerTag}`,
+				);
 			}
 			lines.push("");
 		}

@@ -8,7 +8,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ARCHON_DB_PATH } from "./constants";
+import { ARCHON_DB_PATH, ARCHON_DEFAULT_HOME } from "./constants";
 
 const execFileAsync = promisify(execFile);
 
@@ -125,22 +125,22 @@ export async function listWorkflowsWithDetails(
 		const parsed = JSON.parse(clean) as { workflows: CliWorkflowEntry[] };
 		if (!parsed.workflows || !Array.isArray(parsed.workflows)) return undefined;
 
-		// Detect source by checking if the workflow file exists on disk
-		// Project workflows live in .archon/workflows/; bundled/global are from Archon's install.
-		// We can't perfectly distinguish bundled from global without the server,
-		// but we can detect project workflows by file presence.
+		const fs = require("node:fs");
 		const projectDir = projectCwd
 			? `${projectCwd}/.archon/workflows`
 			: `${process.cwd()}/.archon/workflows`;
+		const homeDir = `${ARCHON_DEFAULT_HOME}/workflows`;
 
 		return parsed.workflows.map((entry: CliWorkflowEntry) => {
-			const fs = require("node:fs");
 			const projectFile = `${projectDir}/${entry.name}.yaml`;
+			const homeFile = `${homeDir}/${entry.name}.yaml`;
 			const source: "project" | "bundled" | "global" = fs.existsSync(
 				projectFile,
 			)
 				? "project"
-				: "bundled";
+				: fs.existsSync(homeFile)
+					? "global"
+					: "bundled";
 			return {
 				name: entry.name,
 				description: entry.description,

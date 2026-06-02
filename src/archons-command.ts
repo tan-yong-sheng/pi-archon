@@ -40,9 +40,16 @@ import {
 import type { NodeSummaryRow } from "./types";
 import { handleArchonStatusCommand } from "./workflow-ops";
 import { fmtElapsed, padLine } from "./ui/workflow-overlay";
-import { readProjectWorkflowNamesFromDisk } from "./workflow-discovery";
+import {
+	readHomeWorkflowNamesFromDisk,
+	readProjectWorkflowNamesFromDisk,
+} from "./workflow-discovery";
 import { runWorkflowBackground } from "./workflow-background";
-import { getRunDetail } from "./archon-api";
+import {
+	getRunDetail,
+	listWorkflowsWithDetails,
+	type WorkflowInfo,
+} from "./archon-api";
 
 // ── Dashboard view levels ────────────────────────────────────
 type ViewLevel = "run-list" | "run-detail" | "node-detail";
@@ -56,11 +63,18 @@ export function buildArchonsCompletions(
 		{ value: "cancel", description: "Cancel a running workflow by run ID" },
 	];
 	// Add workflow names as run targets
-	const workflows = readProjectWorkflowNamesFromDisk();
-	for (const name of workflows) {
+	const localWorkflows = readProjectWorkflowNamesFromDisk();
+	const globalWorkflows = readHomeWorkflowNamesFromDisk();
+	for (const name of localWorkflows) {
 		items.push({
 			value: `run ${name}`,
-			description: `Launch ${name} workflow`,
+			description: `Launch local ${name} workflow`,
+		});
+	}
+	for (const name of globalWorkflows) {
+		items.push({
+			value: `run ${name}`,
+			description: `Launch global ${name} workflow`,
 		});
 	}
 	if (prefix.length > 0) {
@@ -212,7 +226,8 @@ class ArchonsDashboard implements Component {
 	private recentRuns: WorkflowRunRecord[] = [];
 	private runArtifacts: WorkflowArtifact[] = [];
 	private nodeSummaries: NodeSummaryRow[] = [];
-	private allWorkflows: string[] = [];
+	private localWorkflows: string[] = [];
+	private sharedWorkflows: WorkflowInfo[] = [];
 	// API-sourced node outputs for completed runs (keyed by nodeId)
 	private apiNodeOutputs: Map<string, string> = new Map();
 
@@ -233,11 +248,12 @@ class ArchonsDashboard implements Component {
 		this.done = done;
 
 		this.activeRuns = getActiveRuns();
-		this.allWorkflows = readProjectWorkflowNamesFromDisk(
+		this.localWorkflows = readProjectWorkflowNamesFromDisk(
 			ctx.cwd || process.cwd(),
 		);
 
-		// Load recent runs from DB
+		// Load workflow catalog and recent runs from DB
+		void this.loadWorkflowCatalog();
 		this.loadRecentRuns();
 
 		// Build initial run list
@@ -274,6 +290,28 @@ class ArchonsDashboard implements Component {
 			}
 			this.tui.requestRender();
 		}, 1500);
+	}
+
+	private async loadWorkflowCatalog(): Promise<void> {
+		try {
+			const cwd = this.ctx.cwd || process.cwd();
+			const workflows = await listWorkflowsWithDetails(cwd);
+			this.sharedWorkflows = (workflows ?? []).filter(
+				(w) => w.source !== "project",
+			);
+			if (this.level === "run-list") {
+				const prevIdx = this.list.selectedIndex;
+				this.list = this.buildRunList();
+				if (prevIdx > 0) {
+					this.list.setSelectedIndex(
+						Math.min(prevIdx, this.list.filteredItems.length - 1),
+					);
+				}
+				this.tui.requestRender();
+			}
+		} catch {
+			this.sharedWorkflows = [];
+		}
 	}
 
 	private async loadRecentRuns(): Promise<void> {
@@ -431,16 +469,32 @@ class ArchonsDashboard implements Component {
 		}
 
 		// ── Dispatch section ──
-		if (this.allWorkflows.length > 0) {
+		if (this.localWorkflows.length > 0) {
 			items.push({
-				value: "__section_launch__",
-				label: th.fg("dim", th.bold("▶ Launch")),
+				value: "__section_launch_local__",
+				label: th.fg("dim", th.bold("▶ Local")),
 				description: "",
 			});
-			for (const name of this.allWorkflows.slice(0, 8)) {
+			for (const name of this.localWorkflows.slice(0, 8)) {
 				items.push({
-					value: `launch:${name}`,
+					value: `launch:local:${name}`,
 					label: `${th.fg("accent", "▸")} ${name}`,
+					description: "↵ Enter to launch",
+				});
+			}
+		}
+
+		if (this.sharedWorkflows.length > 0) {
+			items.push({
+				value: "__section_launch_shared__",
+				label: th.fg("dim", th.bold("▶ Shared")),
+				description: "",
+			});
+			for (const wf of this.sharedWorkflows.slice(0, 8)) {
+				const sourceTag = wf.source === "global" ? " [Global]" : " [Bundled]";
+				items.push({
+					value: `launch:shared:${wf.name}`,
+					label: `${th.fg("accent", "▸")} ${wf.name}${th.fg("dim", sourceTag)}`,
 					description: "↵ Enter to launch",
 				});
 			}
@@ -504,7 +558,7 @@ class ArchonsDashboard implements Component {
 
 		// Launch — start the workflow
 		if (val.startsWith("launch:")) {
-			const workflowName = val.slice(7);
+			const workflowName = val.slice(val.indexOf(":", 7) + 1);
 			const runId = runWorkflowBackground(
 				this.pi,
 				workflowName,
