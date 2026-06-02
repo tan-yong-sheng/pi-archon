@@ -1,0 +1,26 @@
+name: archon-input-required-demo
+description: >
+  Dummy workflow that requires user input. The first node validates that
+  $ARGUMENTS is present, then the second node echoes the provided input.
+  Use this as a minimal test for workflows that need launch parameters.
+
+nodes:
+  - id: require-input
+    bash: |
+      if [ -z "$ARGUMENTS" ]; then
+        echo "ERROR: This workflow requires input."
+        echo "Usage: archon workflow run archon-input-required-demo \"your input here\""
+        exit 1
+      fi
+
+      echo "Input received: $ARGUMENTS"
+    timeout: 10000
+
+  - id: echo-input
+    prompt: |
+      You are a dummy workflow. The user provided the following input:
+
+      $require-input.output
+
+      Respond with a short, friendly confirmation that the input was received.
+    depends_on: [require-input]

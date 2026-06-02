@@ -15,6 +15,7 @@
  *   Keyboard: Esc back, 'a' approve (if approval), 'r' reject
  */
 
+import * as fs from "node:fs";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -24,6 +25,8 @@ import {
 	SelectList,
 	type SelectItem,
 	truncateToWidth,
+	Key,
+	matchesKey,
 } from "@mariozechner/pi-tui";
 import {
 	getActiveRuns,
@@ -53,6 +56,156 @@ import {
 
 // ── Dashboard view levels ────────────────────────────────────
 type ViewLevel = "run-list" | "run-detail" | "node-detail";
+
+function workflowRequiresInput(
+	projectCwd: string,
+	workflowName: string,
+): boolean {
+	const workflowPath = `${projectCwd}/.archon/workflows/${workflowName}.yaml`;
+	if (!fs.existsSync(workflowPath)) return false;
+	try {
+		const content = fs.readFileSync(workflowPath, "utf-8");
+		return /\$(ARGUMENTS|USER_MESSAGE)\b/.test(content);
+	} catch {
+		return false;
+	}
+}
+
+class WorkflowInputPrompt implements Component {
+	private readonly workflowName: string;
+	private readonly theme: Theme;
+	private readonly done: (value: string | null) => void;
+	private input = "";
+
+	constructor(
+		workflowName: string,
+		theme: Theme,
+		done: (value: string | null) => void,
+	) {
+		this.workflowName = workflowName;
+		this.theme = theme;
+		this.done = done;
+	}
+
+	render(width: number): string[] {
+		const w = Math.max(64, width);
+		const th = this.theme;
+		const innerWidth = w - 2;
+		const lines: string[] = [];
+		const inputText =
+			this.input.length > 0 ? this.input : th.fg("dim", "<type input>");
+		const title = `${th.fg("accent", "◆")} ${th.bold(`Launch ${this.workflowName}`)}`;
+		const inputHeading = th.bold("### Input");
+		const help = th.fg("dim", "Enter=launch · Esc=cancel · Backspace=delete");
+
+		lines.push(
+			th.fg("border", "╭") +
+				th.fg("border", "─".repeat(innerWidth)) +
+				th.fg("border", "╮"),
+		);
+		lines.push(
+			th.fg("border", "│") + padLine(title, innerWidth) + th.fg("border", "│"),
+		);
+		lines.push(
+			th.fg("border", "│") +
+				padLine(inputHeading, innerWidth) +
+				th.fg("border", "│"),
+		);
+		lines.push(
+			th.fg("border", "│") +
+				padLine(inputText, innerWidth) +
+				th.fg("border", "│"),
+		);
+		lines.push(
+			th.fg("border", "│") + padLine(help, innerWidth) + th.fg("border", "│"),
+		);
+		lines.push(
+			th.fg("border", "╰") +
+				th.fg("border", "─".repeat(innerWidth)) +
+				th.fg("border", "╯"),
+		);
+		return lines;
+	}
+
+	handleInput(data: string): boolean {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+			this.done(null);
+			return true;
+		}
+		if (matchesKey(data, Key.enter)) {
+			const trimmed = this.input.trim();
+			this.done(trimmed.length > 0 ? trimmed : null);
+			return true;
+		}
+		if (matchesKey(data, Key.backspace) || matchesKey(data, Key.delete)) {
+			this.input = this.input.slice(0, -1);
+			return true;
+		}
+		if (data && !data.includes("\u001b")) {
+			const clean = data.replace(/\r?\n/g, "");
+			if (clean.length > 0) this.input += clean;
+		}
+		return true;
+	}
+}
+
+async function promptForWorkflowInput(
+	ctx: ExtensionCommandContext,
+	workflowName: string,
+): Promise<string | undefined> {
+	if (!ctx.hasUI || !ctx.ui?.custom) return undefined;
+	return await ctx.ui.custom<string | null>(
+		(
+			_tui: TUI,
+			theme: Theme,
+			_kb: unknown,
+			done: (value: string | null) => void,
+		) => {
+			return new WorkflowInputPrompt(workflowName, theme, done);
+		},
+		{
+			overlay: true,
+			overlayOptions: {
+				anchor: "center",
+				width: 72,
+				maxHeight: "35%",
+			},
+		},
+	);
+}
+
+async function launchWorkflowWithOptionalInput(
+	pi: ExtensionAPI,
+	workflowName: string,
+	ctx: ExtensionCommandContext,
+	query: string,
+	forcePrompt = false,
+	beforePrompt?: () => void,
+): Promise<string | null> {
+	const projectCwd = ctx.cwd || process.cwd();
+	const needsInput =
+		forcePrompt || workflowRequiresInput(projectCwd, workflowName);
+	if (needsInput) beforePrompt?.();
+	const launchQuery = needsInput
+		? await promptForWorkflowInput(ctx, workflowName)
+		: query;
+	if (needsInput && !launchQuery) {
+		ctx.ui?.notify?.(`Launch cancelled for ${workflowName}.`, "warning");
+		return null;
+	}
+	const runId = runWorkflowBackground(
+		pi,
+		workflowName,
+		launchQuery ?? query,
+		ctx,
+	);
+	if (!runId) {
+		ctx.ui?.notify?.("Failed to start workflow (no UI available).", "warning");
+		return null;
+	}
+	ctx.ui?.notify?.(`Workflow ${workflowName} started (${runId}).`, "info");
+	return runId;
+}
 
 // ── Completions for /archons ─────────────────────────────────
 export function buildArchonsCompletions(
@@ -117,12 +270,7 @@ export async function handleArchonsCommand(
 			ctx.ui.notify?.("Usage: /archons run <workflow> [query]", "warning");
 			return;
 		}
-		const runId = runWorkflowBackground(pi, workflow, query, ctx);
-		if (!runId) {
-			ctx.ui.notify?.("Failed to start workflow (no UI available).", "warning");
-		} else {
-			ctx.ui.notify?.(`Workflow ${workflow} started (${runId}).`, "info");
-		}
+		void launchWorkflowWithOptionalInput(pi, workflow, ctx, query, false);
 		return;
 	}
 
@@ -559,16 +707,14 @@ class ArchonsDashboard implements Component {
 		// Launch — start the workflow
 		if (val.startsWith("launch:")) {
 			const workflowName = val.slice(val.indexOf(":", 7) + 1);
-			const runId = runWorkflowBackground(
+			void launchWorkflowWithOptionalInput(
 				this.pi,
 				workflowName,
-				"run",
 				this.ctx,
+				"run",
+				true,
+				() => this.dismiss(),
 			);
-			if (runId) {
-				this.ctx.ui.notify?.(`${workflowName} started (${runId})`, "info");
-			}
-			this.dismiss();
 			return;
 		}
 	}

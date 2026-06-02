@@ -253,6 +253,16 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 				const duration = durationMs
 					? fmtElapsed(Math.floor(durationMs / 1000))
 					: "";
+				const input = String(details?.query ?? "").trim();
+				const inputLines = input
+					? [
+							theme.fg("dim", "### Input"),
+							theme.fg(
+								"dim",
+								`  ${input.split("\n").slice(0, 3).join("\n  ")}`,
+							),
+						]
+					: [];
 				if (launched) {
 					// Background launch — no exit code yet, show as launched
 					const runId = String(details?.runId ?? "");
@@ -262,6 +272,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 							"dim",
 							`  ${String(details?.workflow ?? "")} · ${runId.slice(0, 24)}`,
 						),
+						...inputLines,
 						contentText.length > 0
 							? theme.fg("dim", `  ${contentText.slice(0, 200).split("\n")[0]}`)
 							: undefined,
@@ -278,6 +289,7 @@ export function registerArchonWorkflowTool(pi: ExtensionAPI): void {
 							"dim",
 							`  ${String(details?.workflow ?? "")} · ${duration}${exitCode !== 0 ? ` · exit ${exitCode}` : ""}`,
 						),
+						...inputLines,
 						contentText.length > 0
 							? theme.fg("dim", `  ${contentText.slice(0, 200).split("\n")[0]}`)
 							: undefined,
@@ -359,6 +371,7 @@ async function handleRun(
 				details: {
 					action: "run",
 					workflow,
+					query: queryText,
 					runId,
 					launched: true,
 				},

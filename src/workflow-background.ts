@@ -517,6 +517,7 @@ function runBackgroundCli(
 						`${workflow.toUpperCase()} — ${redactSecrets(query)}`,
 						runResult,
 						durationMs,
+						query,
 					);
 
 					// Query artifacts (best-effort, awaited)
@@ -594,7 +595,7 @@ function runBackgroundCli(
 						ctx.ui.setWidget?.(STATUS_KEY_RUNNING, undefined);
 					}, 1200);
 
-					const errorContent = `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`;
+					const errorContent = `## Archon ${workflow.toUpperCase()} — ${redactSecrets(query)}\n- **Result:** ❌ failed\n### Input\n\n\`\`\`text\n${safeCode(query)}\n\`\`\`\n\n\`\`\`text\n${safeCode(err.message)}\n\`\`\`\n`;
 					if (typeof (pi as any).sendUserMessage === "function") {
 						(pi as any).sendUserMessage(errorContent, {
 							deliverAs: "followUp",
