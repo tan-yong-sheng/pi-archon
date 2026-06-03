@@ -35,7 +35,13 @@ npm install -g @mariozechner/pi-coding-agent
 
 ## Install
 
-Install directly from this repository:
+Install agent skills for Archon:
+
+```bash
+npx skills add https://github.com/coleam00/archon --skill archon -g
+```
+
+Then install this extension directly from this repository:
 
 ```bash
 pi install git:github.com/tan-yong-sheng/pi-archon
